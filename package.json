@@ -1,0 +1,30 @@
+{
+  "name": "w-map",
+  "private": true,
+  "version": "0.1.0",
+  "description": "W_MAP - DIY motorcycle navigation companion (Phase 1: Windows simulator)",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @w-map/simulator",
+    "build": "npm run build -w @w-map/simulator",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:watch": "npm run test:watch -w @w-map/simulator"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "*",
+    "jsdom": "*",
+    "typescript": "*",
+    "vite": "*",
+    "vitest": "*"
+  }
+}

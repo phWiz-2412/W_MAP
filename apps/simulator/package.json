@@ -1,0 +1,19 @@
+{
+  "name": "@w-map/simulator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@w-map/navigation-core": "*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}

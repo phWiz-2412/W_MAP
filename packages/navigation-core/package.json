@@ -1,0 +1,16 @@
+{
+  "name": "@w-map/navigation-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "UI-independent domain model, validation, speed-warning engine and map projection for W_MAP",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  }
+}

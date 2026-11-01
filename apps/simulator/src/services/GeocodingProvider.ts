@@ -229,3 +229,123 @@ export class NominatimGeocodingProvider implements GeocodingProvider {
     }
   }
 }
+
+export interface GooglePlacesProviderOptions {
+  /** Proxy endpoint (default `/api/google/places` so private server keys never reach the browser). */
+  endpointUrl?: string;
+  timeoutMs?: number;
+  countryCode?: string;
+  fetchFn?: typeof fetch;
+}
+
+/**
+ * Google Maps Platform Places API (New) Text Search provider (`places:searchText` via `/api/google/places`).
+ * - Validates coordinates, place IDs, and display names before returning candidates.
+ * - Surfaces quota/billing/HTTP errors explicitly and never falls back to synthetic data silently.
+ */
+export class GooglePlacesGeocodingProvider implements GeocodingProvider {
+  readonly id = "google-places-v1";
+  readonly label = "Google Maps Platform — Places API (New)";
+  readonly isSynthetic = false;
+  readonly attribution = "Google Maps";
+
+  private readonly endpointUrl: string;
+  private readonly timeoutMs: number;
+  private readonly countryCode: string;
+  private readonly fetchFn: typeof fetch;
+
+  constructor(options: GooglePlacesProviderOptions = {}) {
+    this.endpointUrl = options.endpointUrl ?? "/api/google/places";
+    this.timeoutMs = options.timeoutMs ?? 6000;
+    this.countryCode = options.countryCode ?? "VN";
+    this.fetchFn = options.fetchFn ?? ((...args) => fetch(...args));
+  }
+
+  async search(query: string, options: GeocodingSearchOptions = {}): Promise<GeocodingCandidate[]> {
+    const trimmed = query.trim();
+    if (!trimmed) return [];
+    const limit = Math.min(10, Math.max(1, options.limit ?? 6));
+    const regionCode = (options.countryCode ?? this.countryCode).toUpperCase();
+
+    const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+    options.signal?.addEventListener("abort", onExternalAbort, { once: true });
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const response = await this.fetchFn(this.endpointUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          textQuery: trimmed,
+          maxResultCount: limit,
+          regionCode,
+          languageCode: "vi",
+        }),
+        signal: controller.signal,
+      });
+
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const msg =
+          typeof body === "object" &&
+          body !== null &&
+          typeof (body as { error?: unknown }).error === "string"
+            ? (body as { error: string }).error
+            : typeof body === "object" &&
+                body !== null &&
+                typeof (body as { error?: { message?: unknown } }).error?.message === "string"
+              ? (body as { error: { message: string } }).error.message
+              : `Google Places HTTP ${response.status}`;
+        throw new Error(msg);
+      }
+
+      if (typeof body !== "object" || body === null) {
+        throw new Error("Malformed Google Places response");
+      }
+      const placesRaw = (body as { places?: unknown }).places;
+      if (placesRaw === undefined) {
+        return []; // Google Places returns `{}` when zero places match
+      }
+      if (!Array.isArray(placesRaw)) {
+        throw new Error("Malformed Google Places response (expected places array)");
+      }
+
+      const out: GeocodingCandidate[] = [];
+      for (const raw of placesRaw) {
+        if (typeof raw !== "object" || raw === null) continue;
+        const item = raw as Record<string, unknown>;
+        const loc = item.location as { latitude?: unknown; longitude?: unknown } | undefined;
+        const lat = Number(loc?.latitude);
+        const lon = Number(loc?.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+          continue;
+        }
+        const displayObj = item.displayName as { text?: unknown } | undefined;
+        const primaryName =
+          typeof displayObj?.text === "string" && displayObj.text.trim().length > 0
+            ? displayObj.text.trim()
+            : "";
+        const formattedAddress =
+          typeof item.formattedAddress === "string" && item.formattedAddress.trim().length > 0
+            ? item.formattedAddress.trim()
+            : primaryName;
+        if (!primaryName && !formattedAddress) continue;
+
+        out.push({
+          id: `gplace-${String(item.id ?? `${lat},${lon}`)}`,
+          name: primaryName || formattedAddress.split(",")[0]!.trim(),
+          displayName: formattedAddress,
+          ...(typeof item.primaryType === "string" ? { category: item.primaryType } : {}),
+          location: { latitude: lat, longitude: lon },
+          isSynthetic: false,
+          attribution: this.attribution,
+        });
+      }
+      return out;
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener("abort", onExternalAbort);
+    }
+  }
+}

@@ -1,20 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  DEFAULT_ROUTE_PREFERENCES,
   INITIAL_ROUTE_TRACKER,
   evaluateRouteProgress,
   type CalculatedRoute,
   type GPSStatus,
   type RoutePoint,
+  type RoutePreferences,
   type RouteProgressEvaluation,
   type RouteProviderStatus,
   type RouteTrackerState,
+  type RouteTravelMode,
 } from "@w-map/navigation-core";
 import { formatDistance } from "./TurnArrow";
 import { InteractivePlanningMap, isValidRoutePoint } from "./InteractivePlanningMap";
 import type { GeocodingCandidate, GeocodingProvider } from "../services/GeocodingProvider";
 import type { MapRouteProvider } from "../services/MapRouteProvider";
 
-export type ProviderMode = "OFFLINE_SYNTHETIC" | "ONLINE_OSM";
+export type ProviderMode = "OFFLINE_SYNTHETIC" | "ONLINE_OSM" | "GOOGLE_MAPS";
 
 interface Props {
   currentPosition: RoutePoint | null;
@@ -46,6 +49,7 @@ export function DestinationNavigationPanel({
   const [results, setResults] = useState<GeocodingCandidate[]>([]);
 
   const [confirmBeforeRoute, setConfirmBeforeRoute] = useState(false);
+  const [preferences, setPreferences] = useState<RoutePreferences>(DEFAULT_ROUTE_PREFERENCES);
   const [destination, setDestination] = useState<{ label: string; point: RoutePoint } | null>(null);
   const [routeStatus, setRouteStatus] = useState<RouteProviderStatus>("IDLE");
   const [routeError, setRouteError] = useState<string | null>(null);
@@ -122,6 +126,7 @@ export function DestinationNavigationPanel({
       const calc = await routingProvider.calculateRoute({
         origin,
         destination: destPoint,
+        preferences,
         signal: controller.signal,
       });
       if (controller.signal.aborted) return;
@@ -248,10 +253,64 @@ export function DestinationNavigationPanel({
               <option value="ONLINE_OSM">
                 Online OpenStreetMap (Nominatim + OSRM Real Streets)
               </option>
+              <option value="GOOGLE_MAPS">
+                Google Maps Platform (Places API v1 + Routes API v2 via Server Proxy)
+              </option>
             </select>
           </div>
         )}
       </div>
+
+      <fieldset className="route-prefs-box" data-testid="route-preferences">
+        <legend>Motorcycle Route Preferences (Pre-Trip Configuration)</legend>
+        <div className="search-row">
+          <label htmlFor="pref-travel-mode">Travel mode:</label>
+          <select
+            id="pref-travel-mode"
+            data-testid="pref-travel-mode"
+            value={preferences.travelMode}
+            onChange={(e) =>
+              setPreferences((p) => ({ ...p, travelMode: e.target.value as RouteTravelMode }))
+            }
+          >
+            <option value="TWO_WHEELER">Two-Wheeler (Motorcycle where supported)</option>
+            <option value="DRIVE">Drive (Car network + Avoid Highways)</option>
+          </select>
+          <label className="check panel-note" htmlFor="pref-avoid-highways">
+            <input
+              id="pref-avoid-highways"
+              type="checkbox"
+              data-testid="pref-avoid-highways"
+              checked={preferences.avoidHighways}
+              onChange={(e) => setPreferences((p) => ({ ...p, avoidHighways: e.target.checked }))}
+            />{" "}
+            Avoid highways / expressways (Cao tốc)
+          </label>
+          <label className="check panel-note" htmlFor="pref-avoid-tolls">
+            <input
+              id="pref-avoid-tolls"
+              type="checkbox"
+              data-testid="pref-avoid-tolls"
+              checked={preferences.avoidTolls}
+              onChange={(e) => setPreferences((p) => ({ ...p, avoidTolls: e.target.checked }))}
+            />{" "}
+            Avoid toll roads (Trạm thu phí)
+          </label>
+          <label className="check panel-note" htmlFor="pref-avoid-ferries">
+            <input
+              id="pref-avoid-ferries"
+              type="checkbox"
+              data-testid="pref-avoid-ferries"
+              checked={preferences.avoidFerries}
+              onChange={(e) => setPreferences((p) => ({ ...p, avoidFerries: e.target.checked }))}
+            />{" "}
+            Avoid ferries (Phà)
+          </label>
+        </div>
+        <p className="panel-note" data-testid="motorcycle-restriction-note">
+          Vietnam road-access notice: Neither Google Maps nor OSRM guarantees legal motorcycle lane/road exclusions in Vietnam (no API supports a generic &ldquo;avoid car-only lanes&rdquo; rule). Enable <strong>Avoid highways</strong> to avoid expressways (Cao tốc), and always obey physical Vietnamese road signs.
+        </p>
+      </fieldset>
 
       <div className="planner-controls-grid">
         <div className="planner-search-col">

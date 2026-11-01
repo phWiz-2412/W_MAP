@@ -8,3 +8,12 @@ dist
 coverage
 .vscode/
 .idea/
+*.p12
+*.mobileprovision
+*.cer
+*.key
+*.pem
+.pio/
+build/
+.swiftpm/
+DerivedData/

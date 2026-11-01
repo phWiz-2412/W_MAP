@@ -13,12 +13,14 @@ import { SimulatorPanel } from "./components/SimulatorPanel";
 import { DEFAULT_VN_FIXTURE } from "./fixtures/vnFixtures";
 import { useLiveLatencyMetrics, useNavigationData, useSimulatorControls } from "./hooks/useNavigationData";
 import {
+  GooglePlacesGeocodingProvider,
   NominatimGeocodingProvider,
   SyntheticVnGeocodingProvider,
   type GeocodingProvider,
 } from "./services/GeocodingProvider";
 import { LivePhoneProvider, buildRelayWebSocketUrl } from "./services/LivePhoneProvider";
 import {
+  GoogleRoutesProvider,
   OsrmRouteProvider,
   SyntheticFixtureMapProvider,
   type MapRouteProvider,
@@ -67,20 +69,17 @@ export default function App({
   const live = useMemo(() => (source === "LIVE_PHONE" ? liveProviderFactory() : null), [source, liveProviderFactory]);
   const provider = live ?? sim;
 
-  const defaultGeocoder = useMemo<GeocodingProvider>(
-    () =>
-      providerMode === "ONLINE_OSM"
-        ? new NominatimGeocodingProvider()
-        : new SyntheticVnGeocodingProvider(),
-    [providerMode],
-  );
-  const defaultRouter = useMemo<MapRouteProvider>(
-    () =>
-      providerMode === "ONLINE_OSM"
-        ? new OsrmRouteProvider({ clock })
-        : new SyntheticFixtureMapProvider(DEFAULT_VN_FIXTURE, clock),
-    [providerMode, clock],
-  );
+  const defaultGeocoder = useMemo<GeocodingProvider>(() => {
+    if (providerMode === "GOOGLE_MAPS") return new GooglePlacesGeocodingProvider();
+    if (providerMode === "ONLINE_OSM") return new NominatimGeocodingProvider();
+    return new SyntheticVnGeocodingProvider();
+  }, [providerMode]);
+
+  const defaultRouter = useMemo<MapRouteProvider>(() => {
+    if (providerMode === "GOOGLE_MAPS") return new GoogleRoutesProvider({ clock });
+    if (providerMode === "ONLINE_OSM") return new OsrmRouteProvider({ clock });
+    return new SyntheticFixtureMapProvider(DEFAULT_VN_FIXTURE, clock);
+  }, [providerMode, clock]);
 
   const activeGeocoder = customGeocoder ?? defaultGeocoder;
   const activeRouter = customRouter ?? defaultRouter;

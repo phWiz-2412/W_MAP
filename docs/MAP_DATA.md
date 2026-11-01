@@ -1,61 +1,55 @@
-# Map & Routing Integration Guide (Vietnam Evaluation)
+# Map, Geocoding & Google Maps Platform Integration Guide (Vietnam)
 
-> **Current Status:** W_MAP includes both **synthetic offline providers** (`SyntheticVnGeocodingProvider` + `SyntheticFixtureMapProvider`, default for deterministic testing with zero network calls) and **optional online OpenStreetMap providers** (`NominatimGeocodingProvider` + `OsrmRouteProvider`) behind strict provider interfaces.
-
-This document defines the architecture, data contracts, and legal/technical constraints for geocoding, route calculation, and turn-by-turn navigation in Vietnam.
+This document details the verified capabilities, regional limitations, route preferences, and API security configuration for **Google Maps Platform** and **OpenStreetMap / OSRM** in W_MAP.
 
 ---
 
-## 1. Provider Architecture & Separation of Concerns
+## 1. Implemented Providers
 
-To keep the 240 × 240 display and `navigation-core` domain independent of specific map vendors:
+| Layer | Google Maps Platform (Real Online) | OpenStreetMap (Real Online) | Synthetic Offline (Test / Demo) |
+|---|---|---|---|
+| **Geocoding (`GeocodingProvider`)** | [`GooglePlacesGeocodingProvider`](file:///f:/W_MAP/apps/simulator/src/services/GeocodingProvider.ts) (`POST /api/google/places` → `places.googleapis.com/v1/places:searchText`) | [`NominatimGeocodingProvider`](file:///f:/W_MAP/apps/simulator/src/services/GeocodingProvider.ts) (`nominatim.openstreetmap.org/search`) | [`SyntheticVnGeocodingProvider`](file:///f:/W_MAP/apps/simulator/src/services/GeocodingProvider.ts) |
+| **Routing (`MapRouteProvider`)** | [`GoogleRoutesProvider`](file:///f:/W_MAP/apps/simulator/src/services/MapRouteProvider.ts) (`POST /api/google/routes` → `routes.googleapis.com/directions/v2:computeRoutes`) | [`OsrmRouteProvider`](file:///f:/W_MAP/apps/simulator/src/services/MapRouteProvider.ts) (`router.project-osrm.org/route/v1/driving`) | [`SyntheticFixtureMapProvider`](file:///f:/W_MAP/apps/simulator/src/services/MapRouteProvider.ts) |
 
-- **`packages/navigation-core`**:
-  - Defines pure data structures (`RoutePoint`, `BackdropRoad`, `RouteFixture`, `CalculatedRoute`, `RouteStepModel`, `NavigationData`), local coordinate projection (`projectPoint`, `projectPolyline` in `src/map/projection.ts`), and pure turn-by-turn route tracking (`evaluateRouteProgress` in `src/routing/routeTracker.ts`).
-  - Contains **zero** HTTP clients or vendor-specific parsers.
-- **`apps/simulator/src/services/GeocodingProvider.ts`**:
-  - Defines `GeocodingProvider` (`search(query, options): Promise<GeocodingCandidate[]>`).
-  - Implemented offline by `SyntheticVnGeocodingProvider` (Vietnamese POI & address catalog with diacritic-insensitive matching and ambiguous street disambiguation) and online by `NominatimGeocodingProvider` (OSM Nominatim).
-- **`apps/simulator/src/services/MapRouteProvider.ts`**:
-  - Defines `MapRouteProvider` (`fetchRoute(query)` for fixtures and `calculateRoute(query): Promise<CalculatedRoute>` for origin→destination routing).
-  - Implemented offline by `SyntheticFixtureMapProvider` and online by `OsrmRouteProvider` (`parseOsrmRouteResponse`, `parseOsrmManeuver`).
-- **Display Components (`NavigationDisplay`, `MapDisplay`, `TurnDisplay`)**:
-  - Consume only validated `NavigationData` and projected `BackdropRoad` polylines. Interactive destination picking and route overview live in `InteractivePlanningMap` and `DestinationNavigationPanel`.
+> **Strict Non-Fallback Policy:** When a real provider (`GoogleRoutesProvider` or `OsrmRouteProvider`) fails due to network loss, invalid key, or quota exhaustion, W_MAP surfaces an explicit `ERROR` state and **never** silently substitutes a synthetic route.
 
 ---
 
-## 2. Turn-by-Turn Route Progress & Rerouting (`routeTracker.ts`)
+## 2. Verified Google Maps Platform Capabilities & Vietnam Limitations
 
-`evaluateRouteProgress(route, position, state, config)` in `@w-map/navigation-core` updates navigation state on each GPS sample without querying any external routing server:
+### Supported Features (`Routes API v2` & `Places API (New)`)
+- **Places Text Search (`places:searchText`):** Supports Vietnamese diacritics, street addresses, landmarks, and `regionCode: "VN"`, `languageCode: "vi"`.
+- **Routes Computation (`directions/v2:computeRoutes`):**
+  - Returns encoded polyline (`routes.polyline.encodedPolyline`), total distance (`distanceMeters`), duration (`duration`), and ordered turn-by-turn steps (`legs.steps.navigationInstruction`, `distanceMeters`, `staticDuration`, `startLocation`, `endLocation`).
+  - Supports `travelMode: "TWO_WHEELER" | "DRIVE"` and `routeModifiers`:
+    - `avoidHighways: boolean`
+    - `avoidTolls: boolean`
+    - `avoidFerries: boolean`
 
-1. **Nearest-Segment Projection:** Projects the current WGS84 position onto each segment of `route.routePoints` (`pointToSegmentDistanceMeters`) to determine distance from the route polyline and distance along the route.
-2. **Step Progression:** Advances `activeStepIndex` monotonically (with small backtrack tolerance) and computes remaining distance to the next maneuver (`distanceToTurnMeters`), `nextTurn`, and `headingDegrees`.
-3. **GPS Loss Guard:** When `gpsStatus !== "ACTIVE"` or coordinates are missing, route progression and off-route counters pause immediately so stale or invalid fixes never trigger false arrivals or reroutes.
-4. **Off-Route Detection & Rerouting:** Requires `offRouteConsecutiveSamples` (default `3`) consecutive GPS fixes exceeding `offRouteThresholdMeters` (default `45 m`) before setting `isOffRoute: true` and requesting a single recalculation from `MapRouteProvider.calculateRoute`.
-5. **Arrival Detection:** Requires `arrivalConsecutiveSamples` (default `2`) consecutive fixes within `arrivalThresholdMeters` (default `25 m`) of the final route vertex before transitioning `routeStatus` to `"ARRIVED"`.
-
----
-
-## 3. Evaluating OpenStreetMap & Routing Services for Vietnam
-
-### A. Road Geometry & Map Data (OpenStreetMap Vietnam)
-- **Coverage in Vietnam:** Major cities (Hanoi, Ho Chi Minh City, Da Nang, Hai Phong, Can Tho) and national highways (`Quốc lộ`, `Tỉnh lộ`) have strong geometry coverage, including roundabouts (`junction=roundabout`), one-way streets, and alleys (`ngõ` / `hẻm`).
-- **Two-Wheeler Constraints:** In Vietnam, motorbikes are prohibited on most expressways (`Cao tốc`, e.g., `motorroad=yes` or `motorcycle=no`). Any production routing profile used for W_MAP **must** filter out expressways and roads tagged `motorcycle=no` or `access=no`.
-
-### B. Routing Engines (OSRM, Valhalla, GraphHopper)
-- **OSRM (`OsrmRouteProvider`):**
-  - Requests `steps=true&geometries=geojson&overview=full` and maps maneuvers (`turn`, `roundabout`, `rotary`, `uturn`, `continue`, `arrive`) into `TurnDirection`.
-  - **Crucial Limitation — Speed Limits:** Standard OSRM responses provide duration/distance estimates and step instructions, **not** verified legal speed limits. `OsrmRouteProvider` always sets `speedLimitKmh: null` and `speedLimitStatus: "UNKNOWN"`.
+### Critical Regional & Motorcycle Limitations in Vietnam
+1. **No "Avoid Car-Only Lanes" API Modifier:**
+   - Neither Google Routes API v2 nor OSRM provides a parameter to avoid car-only lanes on mixed Vietnamese urban arterials (such as parallel car/motorcycle carriageways on `Phạm Văn Đồng`, `Võ Văn Kiệt`, or `Quốc lộ 1A`).
+2. **Expressways (`Cao tốc`):**
+   - In Vietnam, motorcycles are prohibited on expressways (`Đường cao tốc`). Riders should keep **`Avoid highways / expressways (Cao tốc)` (`avoidHighways: true`)** enabled and must always obey physical road signs (`Biển báo cấm mô tô / xe máy`).
+3. **Speed Limits:**
+   - Standard Google Routes API v2 and OSRM responses do not provide verified legal motorcycle speed limits in Vietnam. All route steps set `speedLimitKmh: null` and `speedLimitStatus: "UNKNOWN"`.
 
 ---
 
-## 4. Attribution, API Usage Limits, and Licensing Obligations
+## 3. API Key Setup, Restrictions, Billing & Security
 
-1. **OpenStreetMap Licensing (ODbL):**
-   - Map data derived from OpenStreetMap is licensed under the **Open Data Commons Open Database License (ODbL)**.
-   - When using `NominatimGeocodingProvider` or `OsrmRouteProvider`, the UI visibly displays `© OpenStreetMap contributors (ODbL)`.
-2. **Public Demo Server Restrictions:**
-   - The public OSRM demo server (`router.project-osrm.org`) and OSM Nominatim (`nominatim.openstreetmap.org`) are strictly for low-volume testing/demos.
-   - W_MAP calculates a route **once** when the user clicks **Calculate Route** (or once upon confirmed 3-sample off-route deviation) and never polls routing servers on routine GPS ticks.
-3. **Offline Limitations:**
-   - The ESP32-S3 display has no internet connection and limited RAM; it only renders simplified local vector coordinates (`compactRouteGeometry`, up to 64 points) transmitted over BLE.
+1. **Enable APIs in Google Cloud Console:**
+   - Enable **Places API (New)** and **Routes API** on a billed Google Cloud project.
+2. **Create Restricted Keys:**
+   - **Server Proxy Key (`GOOGLE_MAPS_SERVER_API_KEY`):**
+     - Application restriction: **IP addresses** (restrict to your server/development IP).
+     - API restriction: Restrict strictly to **Places API (New)** and **Routes API**.
+   - **Native iOS Key (when building `ios/WMap` on macOS):**
+     - Application restriction: **iOS apps** (restrict to your bundle identifier, e.g. `com.wmap.companion`).
+     - API restriction: Restrict to **Places API (New)**, **Routes API**, and **Maps SDK for iOS**.
+3. **Configure Local `.env` (Git-Ignored):**
+   - Copy [`.env.example`](file:///f:/W_MAP/.env.example) to `.env` in the repository root:
+     ```ini
+     GOOGLE_MAPS_SERVER_API_KEY=your_restricted_server_key
+     ```
+   - `.env` is excluded by [`.gitignore`](file:///f:/W_MAP/.gitignore) and is read only by the server-side middleware in [`apps/simulator/relay/googleMapsProxy.ts`](file:///f:/W_MAP/apps/simulator/relay/googleMapsProxy.ts).

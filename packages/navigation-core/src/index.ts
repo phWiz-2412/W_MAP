@@ -5,5 +5,6 @@ export * from "./map/projection";
 export * from "./live/gpsFix";
 export * from "./fixtures/routeFixture";
 export * from "./routing/routeTracker";
+export * from "./ble/bleProtocol";
 
 

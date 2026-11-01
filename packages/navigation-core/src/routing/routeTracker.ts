@@ -17,9 +17,123 @@ export interface RouteStepModel {
   durationSeconds: number | null;
   headingDegrees: number | null;
   instruction: string;
+  /** Optional street/road name extracted from routing step when available. */
+  streetName?: string | null;
   /** Always null unless a verified speed-limit source is explicitly used. */
   speedLimitKmh: number | null;
   speedLimitStatus: SpeedLimitStatus;
+}
+
+export const ROUTE_TRAVEL_MODES = ["TWO_WHEELER", "DRIVE"] as const;
+export type RouteTravelMode = (typeof ROUTE_TRAVEL_MODES)[number];
+
+/**
+ * Supported routing preferences.
+ * Note: Google Maps Platform Routes API v2 supports `avoidHighways`, `avoidTolls`, and `avoidFerries`
+ * on `DRIVE` and `TWO_WHEELER` travel modes, but does NOT provide a verified "avoid car-only lanes"
+ * modifier or guaranteed legal motorcycle road restriction data in Vietnam.
+ */
+export interface RoutePreferences {
+  travelMode: RouteTravelMode;
+  avoidHighways: boolean;
+  avoidTolls: boolean;
+  avoidFerries: boolean;
+}
+
+export const DEFAULT_ROUTE_PREFERENCES: RoutePreferences = {
+  travelMode: "TWO_WHEELER",
+  avoidHighways: true,
+  avoidTolls: false,
+  avoidFerries: false,
+};
+
+/**
+ * Decode a Google Maps Platform Encoded Polyline string (precision 1e-5) into `RoutePoint[]`.
+ * Throws an error if the encoded string is empty, truncated, or produces out-of-range coordinates.
+ */
+export function decodeGooglePolyline(encoded: string): RoutePoint[] {
+  if (typeof encoded !== "string" || encoded.trim().length === 0) {
+    throw new Error("Encoded polyline must be a non-empty string");
+  }
+  const points: RoutePoint[] = [];
+  let index = 0;
+  const len = encoded.length;
+  let lat = 0;
+  let lng = 0;
+
+  while (index < len) {
+    let shift = 0;
+    let result = 0;
+    let byte: number;
+    do {
+      if (index >= len) {
+        throw new Error("Truncated encoded polyline (latitude)");
+      }
+      byte = encoded.charCodeAt(index++) - 63;
+      if (byte < 0 || byte > 63) {
+        throw new Error("Invalid character in encoded polyline");
+      }
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+    const dlat = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+    lat += dlat;
+
+    shift = 0;
+    result = 0;
+    do {
+      if (index >= len) {
+        throw new Error("Truncated encoded polyline (longitude)");
+      }
+      byte = encoded.charCodeAt(index++) - 63;
+      if (byte < 0 || byte > 63) {
+        throw new Error("Invalid character in encoded polyline");
+      }
+      result |= (byte & 0x1f) << shift;
+      shift += 5;
+    } while (byte >= 0x20);
+    const dlng = (result & 1) !== 0 ? ~(result >> 1) : result >> 1;
+    lng += dlng;
+
+    const latitude = Number((lat / 1e5).toFixed(6));
+    const longitude = Number((lng / 1e5).toFixed(6));
+    if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+      throw new Error(`Decoded polyline coordinate out of bounds: (${latitude}, ${longitude})`);
+    }
+    points.push({ latitude, longitude });
+  }
+
+  return points;
+}
+
+/**
+ * Encode `RoutePoint[]` into a Google Encoded Polyline string (precision 1e-5) for deterministic tests.
+ */
+export function encodeGooglePolyline(points: readonly RoutePoint[]): string {
+  let lastLat = 0;
+  let lastLng = 0;
+  let result = "";
+
+  const encodeSigned = (num: number): string => {
+    let s = num < 0 ? ~(num << 1) : num << 1;
+    let out = "";
+    while (s >= 0x20) {
+      out += String.fromCharCode((0x20 | (s & 0x1f)) + 63);
+      s >>= 5;
+    }
+    out += String.fromCharCode(s + 63);
+    return out;
+  };
+
+  for (const pt of points) {
+    const lat = Math.round(pt.latitude * 1e5);
+    const lng = Math.round(pt.longitude * 1e5);
+    result += encodeSigned(lat - lastLat);
+    result += encodeSigned(lng - lastLng);
+    lastLat = lat;
+    lastLng = lng;
+  }
+  return result;
 }
 
 export type RouteProviderStatus =

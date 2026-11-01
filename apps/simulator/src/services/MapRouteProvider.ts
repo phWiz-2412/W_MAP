@@ -1,5 +1,6 @@
 import {
   bearingDegrees,
+  decodeGooglePolyline,
   haversineDistanceMeters,
   interpolateRoutePosition,
   resolveStepAtProgress,
@@ -9,6 +10,7 @@ import {
   type Clock,
   type RouteFixture,
   type RoutePoint,
+  type RoutePreferences,
   type RouteStepModel,
   type SpeedLimitStatus,
   type TurnDirection,
@@ -44,6 +46,7 @@ export interface RouteQuery {
   origin: RoutePoint;
   destination: RoutePoint;
   waypoints?: readonly RoutePoint[];
+  preferences?: RoutePreferences;
   signal?: AbortSignal;
 }
 
@@ -380,6 +383,238 @@ export class OsrmRouteProvider implements MapRouteProvider {
       const validated = validateCalculatedRoute(candidate);
       if (!validated.ok) {
         throw new Error(`Invalid OSRM route: ${validated.errors.join("; ")}`);
+      }
+      return validated.value;
+    } finally {
+      clearTimeout(timer);
+      query.signal?.removeEventListener("abort", onExternalAbort);
+    }
+  }
+}
+
+/**
+ * Map a Google Maps Platform Routes API v2 `Maneuver` enum string into a W_MAP `TurnDirection`.
+ */
+export function parseGoogleManeuver(maneuver: unknown): TurnDirection {
+  const m = typeof maneuver === "string" ? maneuver.toUpperCase() : "";
+  if (m.includes("ROUNDABOUT")) return "ROUNDABOUT";
+  if (m.includes("UTURN")) return "U_TURN";
+  if (m.includes("LEFT")) return "LEFT";
+  if (m.includes("RIGHT")) return "RIGHT";
+  return "STRAIGHT";
+}
+
+function parseGoogleDurationSeconds(raw: unknown): number | null {
+  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 0) return Math.round(raw);
+  if (typeof raw === "string") {
+    const match = /^(\d+(?:\.\d+)?)s$/.exec(raw.trim());
+    if (match) return Math.round(Number(match[1]));
+  }
+  return null;
+}
+
+export interface GoogleRoutesProviderOptions {
+  /** Server proxy endpoint (default `/api/google/routes` so private keys stay on the backend). */
+  endpointUrl?: string;
+  timeoutMs?: number;
+  clock?: Clock;
+  fetchFn?: typeof fetch;
+}
+
+/**
+ * Google Maps Platform Routes API v2 (`directions/v2:computeRoutes`) provider via server proxy.
+ * - Supports verified route modifiers (`avoidHighways`, `avoidTolls`, `avoidFerries`) and `travelMode`
+ *   (`TWO_WHEELER` or `DRIVE`).
+ * - Decodes and validates Google encoded polylines and ordered navigation steps.
+ * - Never fabricates speed limits (`speedLimitKmh: null`, `speedLimitStatus: "UNKNOWN"`) and never
+ *   silently falls back to synthetic routes on error.
+ */
+export class GoogleRoutesProvider implements MapRouteProvider {
+  readonly id = "google-routes-v2";
+  readonly label = "Google Maps Platform — Routes API v2";
+  readonly isSynthetic = false;
+  readonly attribution = "Google Maps";
+
+  private readonly endpointUrl: string;
+  private readonly timeoutMs: number;
+  private readonly clock: Clock;
+  private readonly fetchFn: typeof fetch;
+
+  constructor(options: GoogleRoutesProviderOptions = {}) {
+    this.endpointUrl = options.endpointUrl ?? "/api/google/routes";
+    this.timeoutMs = options.timeoutMs ?? 8000;
+    this.clock = options.clock ?? systemClock;
+    this.fetchFn = options.fetchFn ?? ((...args) => fetch(...args));
+  }
+
+  async fetchRoute(query: RouteQuery): Promise<RouteGuidanceResult> {
+    const route = await this.calculateRoute(query);
+    return {
+      providerId: route.providerId,
+      isSynthetic: route.isSynthetic,
+      attribution: route.attribution,
+      routePoints: route.geometry,
+      steps: route.steps.map((s) => ({
+        turnDirection: s.turnDirection,
+        distanceMeters: s.distanceMeters,
+        headingDegrees: s.headingDegrees,
+        instruction: s.instruction,
+        speedLimitKmh: s.speedLimitKmh,
+        speedLimitStatus: s.speedLimitStatus,
+      })),
+    };
+  }
+
+  async calculateRoute(query: RouteQuery): Promise<CalculatedRoute> {
+    const { origin, destination, preferences } = query;
+    const controller = new AbortController();
+    const onExternalAbort = () => controller.abort();
+    query.signal?.addEventListener("abort", onExternalAbort, { once: true });
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    try {
+      const response = await this.fetchFn(this.endpointUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({
+          origin,
+          destination,
+          preferences: preferences ?? {
+            travelMode: "TWO_WHEELER",
+            avoidHighways: true,
+            avoidTolls: false,
+            avoidFerries: false,
+          },
+        }),
+        signal: controller.signal,
+      });
+
+      const raw: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const errMsg =
+          typeof raw === "object" &&
+          raw !== null &&
+          typeof (raw as { error?: unknown }).error === "string"
+            ? (raw as { error: string }).error
+            : typeof raw === "object" &&
+                raw !== null &&
+                typeof (raw as { error?: { message?: unknown } }).error?.message === "string"
+              ? (raw as { error: { message: string } }).error.message
+              : `Google Routes HTTP ${response.status}`;
+        throw new Error(errMsg);
+      }
+
+      if (typeof raw !== "object" || raw === null) {
+        throw new Error("Malformed Google Routes response");
+      }
+      const routes = (raw as { routes?: unknown }).routes;
+      if (!Array.isArray(routes) || routes.length === 0) {
+        throw new Error("No route found by Google Routes API for the selected origin, destination, and preferences.");
+      }
+
+      const primary = routes[0] as Record<string, unknown>;
+      const polyObj = primary.polyline as { encodedPolyline?: unknown } | undefined;
+      if (typeof polyObj?.encodedPolyline !== "string" || polyObj.encodedPolyline.trim().length === 0) {
+        throw new Error("Missing or empty encodedPolyline in Google Routes response");
+      }
+
+      const geometry = decodeGooglePolyline(polyObj.encodedPolyline);
+      if (geometry.length < 2) {
+        throw new Error("Decoded Google route polyline has fewer than 2 points");
+      }
+
+      const legs = Array.isArray(primary.legs) ? (primary.legs as Record<string, unknown>[]) : [];
+      const rawSteps = legs[0] && Array.isArray(legs[0].steps) ? (legs[0].steps as Record<string, unknown>[]) : [];
+      const steps: RouteStepModel[] = [];
+
+      for (const rs of rawSteps) {
+        const navInst = (rs.navigationInstruction ?? {}) as {
+          maneuver?: unknown;
+          instructions?: unknown;
+        };
+        const endLoc = (rs.endLocation as { latLng?: { latitude?: unknown; longitude?: unknown } } | undefined)?.latLng;
+        const startLoc = (rs.startLocation as { latLng?: { latitude?: unknown; longitude?: unknown } } | undefined)?.latLng;
+
+        const lat = Number(endLoc?.latitude ?? startLoc?.latitude);
+        const lon = Number(endLoc?.longitude ?? startLoc?.longitude);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+        const turnDirection = parseGoogleManeuver(navInst.maneuver);
+        const instruction =
+          typeof navInst.instructions === "string" && navInst.instructions.trim().length > 0
+            ? navInst.instructions.replace(/\s+/g, " ").trim()
+            : `Proceed (${turnDirection.toLowerCase()})`;
+        const dist =
+          typeof rs.distanceMeters === "number" && Number.isFinite(rs.distanceMeters) && rs.distanceMeters >= 0
+            ? Math.round(rs.distanceMeters)
+            : 0;
+        const dur = parseGoogleDurationSeconds(rs.staticDuration);
+
+        let heading: number | null = null;
+        if (
+          startLoc &&
+          endLoc &&
+          Number.isFinite(Number(startLoc.latitude)) &&
+          Number.isFinite(Number(startLoc.longitude))
+        ) {
+          heading =
+            Math.round(
+              bearingDegrees(
+                Number(startLoc.latitude),
+                Number(startLoc.longitude),
+                lat,
+                lon,
+              ),
+            ) % 360;
+        }
+
+        steps.push({
+          turnDirection,
+          maneuverLocation: { latitude: lat, longitude: lon },
+          distanceMeters: dist,
+          durationSeconds: dur,
+          headingDegrees: heading,
+          instruction,
+          speedLimitKmh: null,
+          speedLimitStatus: "UNKNOWN",
+        });
+      }
+
+      if (steps.length === 0) {
+        steps.push({
+          turnDirection: "STRAIGHT",
+          maneuverLocation: destination,
+          distanceMeters: typeof primary.distanceMeters === "number" ? Math.round(primary.distanceMeters) : 0,
+          durationSeconds: parseGoogleDurationSeconds(primary.duration),
+          headingDegrees: null,
+          instruction: "Proceed to destination",
+          speedLimitKmh: null,
+          speedLimitStatus: "UNKNOWN",
+        });
+      }
+
+      const totalDistanceMeters =
+        typeof primary.distanceMeters === "number" && Number.isFinite(primary.distanceMeters) && primary.distanceMeters >= 0
+          ? Math.round(primary.distanceMeters)
+          : steps.reduce((acc, s) => acc + s.distanceMeters, 0);
+
+      const candidate: CalculatedRoute = {
+        routeId: `google-${this.clock.nowMs()}`,
+        providerId: this.id,
+        isSynthetic: false,
+        attribution: this.attribution,
+        calculatedAtMs: this.clock.nowMs(),
+        origin,
+        destination,
+        totalDistanceMeters,
+        estimatedDurationSeconds: parseGoogleDurationSeconds(primary.duration),
+        geometry,
+        steps,
+      };
+
+      const validated = validateCalculatedRoute(candidate);
+      if (!validated.ok) {
+        throw new Error(`Invalid Google Routes response: ${validated.errors.join("; ")}`);
       }
       return validated.value;
     } finally {

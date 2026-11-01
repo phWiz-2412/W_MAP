@@ -11,7 +11,7 @@ interface Props {
 }
 
 /**
- * Speed-limit sign.
+ * Speed-limit sign with radius-proportional typography and ring thickness.
  *  VALID   → solid red ring, white face.
  *  STALE   → dashed amber ring, dimmed value, "OLD" tag (never shown as verified).
  *  UNKNOWN → dashed grey ring, "--", never a guessed number.
@@ -23,6 +23,16 @@ export function SpeedLimitSign({ cx, cy, r, limitKmh, status, inactive = false }
   const face = status === "VALID" ? "#ffffff" : "#1b1f27";
   const text = status === "VALID" ? "#0b0d10" : status === "STALE" ? "#f5a524" : "#9aa3b2";
   const tag = status === "STALE" ? "OLD" : status === "UNKNOWN" ? "N/A" : "LIMIT";
+
+  const scale = r / 27;
+  const strokeWidth = Math.max(2.5, Number((5.5 * scale).toFixed(1)));
+  const baseFontSize = shown.length >= 3 ? 21 : shown === "--" ? 23 : 25;
+  const fontSize = Math.max(10, Math.round(baseFontSize * scale));
+  const textYOffset = Math.round(fontSize * 0.35);
+  const tagFontSize = Math.max(6.5, Number((8.5 * scale).toFixed(1)));
+  const tagYOffset = Math.round(r + tagFontSize + 2);
+  const dashPattern = dashed ? `${Math.max(2.5, Number((4.5 * scale).toFixed(1)))} ${Math.max(2, Number((3.5 * scale).toFixed(1)))}` : undefined;
+
   return (
     <g
       data-testid="limit-sign"
@@ -37,11 +47,35 @@ export function SpeedLimitSign({ cx, cy, r, limitKmh, status, inactive = false }
             : "Speed limit unknown"
       }
     >
-      <circle cx={cx} cy={cy} r={r} fill={face} stroke={ring} strokeWidth={6} strokeDasharray={dashed ? "5 4" : undefined} />
-      <text x={cx} y={cy + 9} textAnchor="middle" fontSize={shown === "--" ? 24 : 26} fontWeight={800} fill={text} data-testid="limit-value">
+      <circle
+        cx={cx}
+        cy={cy}
+        r={r}
+        fill={face}
+        stroke={ring}
+        strokeWidth={strokeWidth}
+        strokeDasharray={dashPattern}
+      />
+      <text
+        x={cx}
+        y={cy + textYOffset}
+        textAnchor="middle"
+        fontSize={fontSize}
+        fontWeight={800}
+        fill={text}
+        data-testid="limit-value"
+      >
         {shown}
       </text>
-      <text x={cx} y={cy + r + 12} textAnchor="middle" fontSize={9} fontWeight={700} fill={ring} data-testid="limit-tag">
+      <text
+        x={cx}
+        y={cy + tagYOffset}
+        textAnchor="middle"
+        fontSize={tagFontSize}
+        fontWeight={700}
+        fill={ring}
+        data-testid="limit-tag"
+      >
         {tag}
       </text>
     </g>

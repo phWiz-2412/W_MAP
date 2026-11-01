@@ -17,7 +17,7 @@ import {
   SyntheticVnGeocodingProvider,
   type GeocodingProvider,
 } from "./services/GeocodingProvider";
-import { LivePhoneProvider } from "./services/LivePhoneProvider";
+import { LivePhoneProvider, buildRelayWebSocketUrl } from "./services/LivePhoneProvider";
 import {
   OsrmRouteProvider,
   SyntheticFixtureMapProvider,
@@ -42,10 +42,8 @@ interface Props {
   initialSource?: DataSource;
 }
 
-const defaultLiveFactory = () => {
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  return new LivePhoneProvider({ url: `${proto}://${location.host}/ws?role=display` });
-};
+const defaultLiveFactory = () =>
+  new LivePhoneProvider({ url: buildRelayWebSocketUrl(window.location, "display") });
 
 const fmtMs = (v: number | null) => (v === null ? "--" : `${v} ms`);
 
@@ -60,7 +58,11 @@ export default function App({
 }: Props) {
   const [sim] = useState(() => simulator ?? new SimulatorService({ heartbeatMs: 1000 }));
   const [source, setSource] = useState<DataSource>(initialSource);
-  const [providerMode, setProviderMode] = useState<ProviderMode>("OFFLINE_SYNTHETIC");
+  const [providerMode, setProviderMode] = useState<ProviderMode>(
+    initialSource === "LIVE_PHONE" && !customGeocoder && !customRouter
+      ? "ONLINE_OSM"
+      : "OFFLINE_SYNTHETIC",
+  );
 
   const live = useMemo(() => (source === "LIVE_PHONE" ? liveProviderFactory() : null), [source, liveProviderFactory]);
   const provider = live ?? sim;
@@ -84,6 +86,7 @@ export default function App({
   const activeRouter = customRouter ?? defaultRouter;
 
   const [threshold, setThreshold] = useState(warningBase.thresholdKmh);
+  const [mapMetersPerPixel, setMapMetersPerPixel] = useState<number>(2);
   const controls = useSimulatorControls(sim);
   const feed = useNavigationData(provider);
   const liveMetrics = useLiveLatencyMetrics(live);
@@ -95,18 +98,18 @@ export default function App({
   const isLive = source === "LIVE_PHONE";
   const mode = controls.mode;
 
+  useEffect(() => {
+    if (isLive && liveMetrics.phoneDisplayMode) {
+      sim.update({ mode: liveMetrics.phoneDisplayMode });
+    }
+  }, [isLive, liveMetrics.phoneDisplayMode, sim]);
+
   const handleGuidanceChange = useCallback(
     (evalResult: RouteProgressEvaluation | null, route: CalculatedRoute | null) => {
       if (isLive && live) {
         if (!evalResult || !route) {
-          live.setRouteOverlay({
-            routeStatus: "INACTIVE",
-            distanceToTurnMeters: null,
-            routePoints: [],
-            turnDirection: "STRAIGHT",
-            speedLimitKmh: null,
-            speedLimitStatus: "UNKNOWN",
-          });
+          // Leave phone-computed guidance untouched when no PC-side route override is active
+          live.setRouteOverlay({});
         } else {
           live.setRouteOverlay({
             routeStatus: "ACTIVE",
@@ -151,7 +154,16 @@ export default function App({
         <button type="button" aria-pressed={!isLive} onClick={() => setSource("SIMULATOR")}>
           Simulator
         </button>
-        <button type="button" aria-pressed={isLive} onClick={() => setSource("LIVE_PHONE")}>
+        <button
+          type="button"
+          aria-pressed={isLive}
+          onClick={() => {
+            setSource("LIVE_PHONE");
+            if (!customGeocoder && !customRouter) {
+              setProviderMode("ONLINE_OSM");
+            }
+          }}
+        >
           Live phone GPS
         </button>
       </div>
@@ -165,8 +177,48 @@ export default function App({
               clock={clock}
               linkLabel={isLive ? "PHONE LINK" : "SIM BLE"}
               backdropRoads={isLive ? undefined : sim.getBackdropRoads()}
+              metersPerPixel={mapMetersPerPixel}
             />
           </div>
+          <div className="hud-mode-switch" role="group" aria-label="HUD display mode">
+            <button
+              type="button"
+              className={mode === "TURN" ? "active" : ""}
+              aria-pressed={mode === "TURN"}
+              onClick={() => sim.update({ mode: "TURN" })}
+              data-testid="hud-mode-turn"
+            >
+              TURN HUD
+            </button>
+            <button
+              type="button"
+              className={mode === "MAP" ? "active" : ""}
+              aria-pressed={mode === "MAP"}
+              onClick={() => sim.update({ mode: "MAP" })}
+              data-testid="hud-mode-map"
+            >
+              MAP HUD
+            </button>
+          </div>
+          {mode === "MAP" && (
+            <div className="hud-mode-switch" role="group" aria-label="MAP HUD zoom scale">
+              {[
+                { label: "Zoom Near (1x)", value: 1 },
+                { label: "Normal (2x)", value: 2 },
+                { label: "Wide (4x)", value: 4 },
+              ].map((z) => (
+                <button
+                  key={z.value}
+                  type="button"
+                  className={mapMetersPerPixel === z.value ? "active" : ""}
+                  aria-pressed={mapMetersPerPixel === z.value}
+                  onClick={() => setMapMetersPerPixel(z.value)}
+                >
+                  {z.label}
+                </button>
+              ))}
+            </div>
+          )}
           <p className="feed-info" data-testid="feed-info">
             Packet #{feed.data?.sequenceNumber ?? "-"} - rejected: {feed.rejectedCount} - dropped old: {feed.droppedStaleCount}
           </p>
@@ -205,12 +257,43 @@ export default function App({
               <fieldset data-testid="live-latency-metrics">
                 <legend>Latency &amp; Telemetry Diagnostics</legend>
                 <div className="row">
+                  <span>Diagnostic status:</span>
+                  <output data-testid="metric-diagnostic-status">
+                    {liveMetrics.diagnosticStatus ?? "DISCONNECTED_FROM_RELAY"} — {liveMetrics.diagnosticSummary ?? ""}
+                  </output>
+                </div>
+                <div className="row">
+                  <span>Display WebSocket / Relay phones:</span>
+                  <output data-testid="metric-display-ws">
+                    {liveMetrics.displaySocketState ?? "disconnected"} (phones on relay:{" "}
+                    <span data-testid="metric-relay-phones">{liveMetrics.relayPhoneCount ?? 0}</span>)
+                  </output>
+                </div>
+                <div className="row">
+                  <span>Current relay endpoint:</span>
+                  <output data-testid="metric-relay-endpoint">{liveMetrics.relayEndpoint || "--"}</output>
+                </div>
+                <div className="row">
+                  <span>iPhone Brain route / instruction:</span>
+                  <output data-testid="metric-phone-route">
+                    {liveMetrics.phoneDestinationName
+                      ? `${liveMetrics.phoneDestinationName} — ${liveMetrics.phoneInstruction ?? "Active"} (${liveMetrics.phoneRemainingDistanceMeters ?? "--"} m left)`
+                      : "None (plan route on iPhone /phone.html or below)"}
+                  </output>
+                </div>
+                <div className="row">
                   <span>GPS sample age (phone clock):</span>
                   <output data-testid="metric-sample-age">{fmtMs(liveMetrics.phoneSampleAgeMs)}</output>
                 </div>
                 <div className="row">
                   <span>Phone JS processing delay:</span>
                   <output data-testid="metric-phone-proc">{fmtMs(liveMetrics.phoneProcessingDelayMs)}</output>
+                </div>
+                <div className="row">
+                  <span>Last phone send timestamp (phone clock):</span>
+                  <output data-testid="metric-last-phone-send">
+                    {liveMetrics.lastPhoneSendAtMs != null ? `${liveMetrics.lastPhoneSendAtMs}` : "--"}
+                  </output>
                 </div>
                 <div className="row">
                   <span>Relay → Simulator transit (PC clock):</span>
@@ -229,7 +312,7 @@ export default function App({
                   <output data-testid="metric-since-fix">{fmtMs(liveMetrics.timeSinceLastFixMs)}</output>
                 </div>
                 <div className="row">
-                  <span>Time since last packet:</span>
+                  <span>Time since last GPS packet:</span>
                   <output data-testid="metric-since-pkt">{fmtMs(liveMetrics.timeSinceLastPacketMs)}</output>
                 </div>
                 <div className="row">
@@ -244,6 +327,12 @@ export default function App({
                     {liveMetrics.acceptedFixes} / {liveMetrics.invalidMessages} / {liveMetrics.droppedOutOfOrder}
                   </output>
                 </div>
+                {liveMetrics.lastError && (
+                  <div className="row">
+                    <span>Last connection / packet error:</span>
+                    <output data-testid="metric-last-error">{liveMetrics.lastError}</output>
+                  </div>
+                )}
               </fieldset>
             </section>
           ) : (
@@ -263,18 +352,19 @@ export default function App({
               onThresholdChange={setThreshold}
             />
           )}
-
-          <DestinationNavigationPanel
-            currentPosition={currentPosition}
-            accuracyMeters={isLive ? (live?.getLatestFix()?.accuracyMeters ?? null) : 8}
-            gpsStatus={feed.data?.gpsStatus ?? "LOST"}
-            providerMode={providerMode}
-            onProviderModeChange={customGeocoder || customRouter ? undefined : setProviderMode}
-            geocodingProvider={activeGeocoder}
-            routingProvider={activeRouter}
-            onGuidanceChange={handleGuidanceChange}
-          />
         </div>
+
+        <DestinationNavigationPanel
+          currentPosition={currentPosition}
+          accuracyMeters={isLive ? (live?.getLatestFix()?.accuracyMeters ?? null) : 8}
+          gpsStatus={feed.data?.gpsStatus ?? "LOST"}
+          providerMode={providerMode}
+          onProviderModeChange={customGeocoder || customRouter ? undefined : setProviderMode}
+          geocodingProvider={activeGeocoder}
+          routingProvider={activeRouter}
+          fallbackRoutePoints={isLive ? feed.data?.routePoints : undefined}
+          onGuidanceChange={handleGuidanceChange}
+        />
       </main>
     </div>
   );

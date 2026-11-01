@@ -1,6 +1,7 @@
 /** Shared navigation data model. Framework-independent; used by UI, simulator, and (later) BLE layers. */
 
-export type NavigationMode = "TURN" | "MAP";
+export const NAVIGATION_MODES = ["TURN", "MAP"] as const;
+export type NavigationMode = (typeof NAVIGATION_MODES)[number];
 
 export const TURN_DIRECTIONS = ["LEFT", "RIGHT", "STRAIGHT", "U_TURN", "ROUNDABOUT"] as const;
 export type TurnDirection = (typeof TURN_DIRECTIONS)[number];
@@ -8,7 +9,8 @@ export type TurnDirection = (typeof TURN_DIRECTIONS)[number];
 export type GPSStatus = "ACTIVE" | "LOST";
 export type BLEStatus = "CONNECTED" | "DISCONNECTED";
 /** Whether turn-by-turn navigation is currently running (not whether geometry exists). */
-export type RouteStatus = "ACTIVE" | "INACTIVE";
+export const ROUTE_STATUSES = ["ACTIVE", "INACTIVE"] as const;
+export type RouteStatus = (typeof ROUTE_STATUSES)[number];
 /**
  * VALID   – known and current.
  * UNKNOWN – no verified limit available (speedLimitKmh must be null).

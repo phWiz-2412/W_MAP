@@ -3,27 +3,130 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>W_MAP Phone GPS</title>
+    <title>W_MAP Phone Companion (SteedPilot Brain)</title>
     <style>
-      body { margin: 0; padding: 20px; background: #0e1116; color: #e8ecf2; font-family: system-ui, sans-serif; text-align: center; }
-      #speed { font-size: 96px; font-weight: 800; margin: 16px 0 0; }
-      .unit { color: #a3acba; }
-      button { font: inherit; font-size: 1.1rem; padding: 14px 24px; margin: 8px; border-radius: 10px; border: 1px solid #3a4452; background: #161a21; color: #e8ecf2; }
-      #error { color: #ff9a9a; min-height: 3em; }
-      .note { color: #f5a524; font-size: 0.85rem; }
-      p { margin: 6px 0; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 16px;
+        background: #0e1116;
+        color: #e8ecf2;
+        font-family: system-ui, -apple-system, sans-serif;
+        max-width: 540px;
+        margin-inline: auto;
+      }
+      h1 { font-size: 1.35rem; margin: 4px 0 2px; text-align: center; }
+      .sub { text-align: center; color: #94a3b8; font-size: 0.85rem; margin-bottom: 12px; }
+      .card {
+        background: #161b22;
+        border: 1px solid #2b3442;
+        border-radius: 12px;
+        padding: 14px;
+        margin-bottom: 14px;
+      }
+      .hero { text-align: center; }
+      #speed { font-size: 76px; font-weight: 800; line-height: 1; margin: 6px 0; }
+      .unit { color: #a3acba; font-size: 0.9rem; }
+      #status { font-weight: 700; color: #67e8f9; margin-top: 8px; }
+      #endpoint { font-family: monospace; font-size: 0.78rem; color: #94a3b8; word-break: break-all; }
+      #error { color: #ff9a9a; min-height: 1.4em; font-size: 0.9rem; }
+      .btn-row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin: 10px 0; }
+      button, select, input {
+        font: inherit;
+        border-radius: 10px;
+        border: 1px solid #3a4452;
+        background: #0e1116;
+        color: #e8ecf2;
+        padding: 11px 16px;
+      }
+      button { background: #1f2937; cursor: pointer; font-weight: 600; }
+      button.primary { background: #0284c7; border-color: #38bdf8; color: #fff; }
+      button.active-mode { background: #0f766e; border-color: #2dd4bf; color: #fff; }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      .search-row { display: flex; gap: 8px; margin-top: 8px; }
+      .search-row input { flex: 1; min-width: 0; }
+      .candidates { list-style: none; padding: 0; margin: 10px 0 0; max-height: 200px; overflow-y: auto; }
+      .candidates li { margin-bottom: 6px; }
+      .candidates button {
+        width: 100%;
+        text-align: left;
+        padding: 10px 12px;
+        font-weight: 500;
+        background: #0d1117;
+      }
+      .candidates button.selected { border-color: #38bdf8; background: #0c2d48; }
+      .guidance-box {
+        background: #0c1929;
+        border: 1px solid #1e3a5f;
+        border-radius: 10px;
+        padding: 10px 12px;
+        margin-top: 10px;
+        font-size: 0.92rem;
+      }
+      .guidance-turn { font-size: 1.2rem; font-weight: 700; color: #38bdf8; }
+      .note { color: #f5a524; font-size: 0.82rem; text-align: center; }
+      p { margin: 5px 0; }
+      label { display: block; font-size: 0.85rem; color: #94a3b8; margin-bottom: 4px; }
     </style>
   </head>
   <body>
-    <h1>W_MAP phone GPS</h1>
-    <div id="speed">--</div>
-    <div class="unit">km/h (real GPS speed)</div>
-    <p id="info">waiting for GPS...</p>
-    <p id="link">Link to display: not started</p>
-    <p id="error" role="alert"></p>
-    <button id="start" type="button">Start sending GPS</button>
-    <button id="stop" type="button" disabled>Stop</button>
-    <p class="note">Keep this page open and the screen on. Safari may pause GPS when the page is in the background. Do not operate the phone while riding.</p>
+    <h1>W_MAP iPhone Companion</h1>
+    <div class="sub">SteedPilot Architecture: iPhone Brain → Relay → Display HUD</div>
+
+    <section class="card hero">
+      <div id="speed">--</div>
+      <div class="unit">km/h (real GPS speed)</div>
+      <p id="status">State: Stopped</p>
+      <p id="info">waiting for GPS...</p>
+      <p id="link">Link status: not started</p>
+      <p id="endpoint"></p>
+      <p id="error" role="alert"></p>
+
+      <div class="btn-row">
+        <button id="start" class="primary" type="button">Start sending GPS</button>
+        <button id="stop" type="button" disabled>Stop</button>
+      </div>
+
+      <div class="btn-row" role="group" aria-label="Remote display mode">
+        <button id="mode-turn" class="active-mode" type="button">HUD: TURN Mode</button>
+        <button id="mode-map" type="button">HUD: MAP Mode</button>
+      </div>
+    </section>
+
+    <section class="card" aria-label="iPhone Route Brain">
+      <h2 style="font-size: 1.05rem; margin: 0 0 8px;">Route Planner on iPhone (The Brain)</h2>
+      <div>
+        <label for="provider-mode">Map &amp; Routing Source</label>
+        <select id="provider-mode" style="width: 100%;">
+          <option value="ONLINE_OSM">Online Vietnam Roads (OSM Nominatim + OSRM)</option>
+          <option value="OFFLINE_SYNTHETIC">Offline Synthetic Vietnam (Built-in Places)</option>
+        </select>
+      </div>
+
+      <div class="search-row">
+        <input id="search-input" type="search" placeholder="Search place or street (e.g. Ben Thanh, Le Loi)..." />
+        <button id="search-btn" type="button">Search</button>
+      </div>
+
+      <p id="planner-status" style="font-size: 0.85rem; color: #94a3b8;"></p>
+      <ul id="candidate-list" class="candidates"></ul>
+
+      <div class="btn-row">
+        <button id="calc-route-btn" class="primary" type="button" disabled>Calculate &amp; Send Route to HUD</button>
+        <button id="clear-route-btn" type="button" disabled>Clear Route</button>
+      </div>
+
+      <div id="guidance-box" class="guidance-box" hidden>
+        <div id="guidance-dest" style="font-weight: 600;"></div>
+        <div id="guidance-turn" class="guidance-turn"></div>
+        <div id="guidance-inst"></div>
+        <div id="guidance-rem" style="color: #94a3b8; font-size: 0.85rem;"></div>
+      </div>
+    </section>
+
+    <p class="note">
+      Keep this page open and the screen on. Safari may pause GPS when the page is in the background. Do not operate the phone while riding.
+    </p>
     <script type="module" src="/src/phone/main.ts"></script>
   </body>
 </html>

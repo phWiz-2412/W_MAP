@@ -118,10 +118,12 @@ describe("NavigationDisplay – TURN mode", () => {
 });
 
 describe("NavigationDisplay – MAP mode", () => {
-  it("renders route, roads, position marker, north indicator and simulated-map label", () => {
+  it("renders route, roads, OpenStreetMap street tiles, position marker, north indicator and simulated-map label", () => {
     show(makeData(), "MAP");
     expect(screen.getByTestId("map-display")).toBeInTheDocument();
     expect(screen.queryByTestId("turn-display")).not.toBeInTheDocument();
+    expect(screen.getByTestId("map-osm-tiles")).toBeInTheDocument();
+    expect(screen.getByTestId("map-osm-tiles").querySelectorAll("image").length).toBeGreaterThanOrEqual(4);
     expect(screen.getByTestId("map-route")).toBeInTheDocument();
     expect(screen.getByTestId("map-roads")).toBeInTheDocument();
     expect(screen.getByTestId("position-marker")).toHaveAttribute("data-gps", "ACTIVE");

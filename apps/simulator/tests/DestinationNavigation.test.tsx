@@ -2,9 +2,12 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest";
 import { ManualClock, fromLocalMeters, type CalculatedRoute, type RoutePoint } from "@w-map/navigation-core";
 import App from "../src/App";
+import { isValidRoutePoint } from "../src/components/InteractivePlanningMap";
 import {
   NominatimGeocodingProvider,
   SyntheticVnGeocodingProvider,
+  type GeocodingCandidate,
+  type GeocodingProvider,
 } from "../src/services/GeocodingProvider";
 import { LivePhoneProvider, type SocketLike } from "../src/services/LivePhoneProvider";
 import {
@@ -35,7 +38,16 @@ class FakeSocket implements SocketLike {
   }
 }
 
-describe("GeocodingProvider (Offline Synthetic & Nominatim HTTP)", () => {
+describe("Coordinate validation & GeocodingProvider (Offline Synthetic & Nominatim HTTP)", () => {
+  it("validates geographic coordinates and rejects out-of-range or non-finite values", () => {
+    expect(isValidRoutePoint({ latitude: 21.0285, longitude: 105.8542 })).toBe(true);
+    expect(isValidRoutePoint({ latitude: -90, longitude: 180 })).toBe(true);
+    expect(isValidRoutePoint({ latitude: 95, longitude: 105 })).toBe(false);
+    expect(isValidRoutePoint({ latitude: 21, longitude: -185 })).toBe(false);
+    expect(isValidRoutePoint({ latitude: Number.NaN, longitude: 105 })).toBe(false);
+    expect(isValidRoutePoint(null)).toBe(false);
+  });
+
   it("finds ambiguous Vietnamese street names (e.g. 'Le Loi' in both Hanoi and HCMC) without diacritics", async () => {
     const geo = new SyntheticVnGeocodingProvider();
     const matches = await geo.search("le loi");
@@ -164,8 +176,8 @@ describe("OsrmRouteProvider & parseOsrmManeuver", () => {
   });
 });
 
-describe("App Destination Search, Map Selection, Live Progress & Off-Route Rerouting", () => {
-  it("searches for a destination, selects a match, calculates a route, and updates TURN and MAP displays", async () => {
+describe("App Destination Search, Leaflet Map Selection, Live Progress & Off-Route Rerouting", () => {
+  it("searches for a destination, selects a match, calculates a route, and synchronizes Leaflet map, TURN HUD, and MAP HUD", async () => {
     const clock = new ManualClock(50_000);
     const sim = new SimulatorService({ clock });
     const geocoder = new SyntheticVnGeocodingProvider();
@@ -199,17 +211,39 @@ describe("App Destination Search, Map Selection, Live Progress & Off-Route Rerou
       expect(screen.getByTestId("planner-route-status")).toHaveTextContent("ACTIVE");
     });
 
-    // Planning map renders route & destination marker
+    // Interactive Leaflet map renders route polyline, origin marker, and destination marker, and fits route bounds
+    const mapContainer = screen.getByTestId("planning-map-container");
+    expect(mapContainer).toHaveAttribute("data-map-init-count", "1");
+    expect(Number(mapContainer.getAttribute("data-fit-bounds-count"))).toBeGreaterThanOrEqual(1);
     expect(screen.getByTestId("planning-map-route")).toBeInTheDocument();
     expect(screen.getByTestId("planning-map-destination")).toBeInTheDocument();
+    expect(screen.getByTestId("planning-map-origin")).toBeInTheDocument();
+
+    // Next-turn distance is distinct from total remaining route distance
+    const nextTurnDist = screen.getByTestId("planner-next-turn-distance").textContent;
+    const totalSummary = screen.getByTestId("route-distance-summary").textContent;
+    expect(nextTurnDist).toBeTruthy();
+    expect(totalSummary).toBeTruthy();
+    expect(nextTurnDist).not.toEqual(totalSummary);
+
+    // Turn-by-turn steps list is populated
+    expect(screen.getByTestId("route-steps-list")).toBeInTheDocument();
 
     // Compact 240x240 display shows UNKNOWN speed limit (never inferred from routing)
     expect(screen.getByTestId("limit-value")).toHaveTextContent("--");
     expect(screen.getByTestId("navigation-display")).toHaveAttribute("data-speed-state", "UNKNOWN_LIMIT");
 
-    // Switch to MAP mode and verify compact route is rendered
-    fireEvent.change(screen.getByLabelText("Navigation mode"), { target: { value: "MAP" } });
+    // Switch to MAP HUD and verify compact route is rendered consistently
+    fireEvent.click(screen.getByTestId("hud-mode-map"));
     expect(screen.getByTestId("map-route")).toBeInTheDocument();
+
+    // Test Fit Route and Recenter GPS controls on the Leaflet map
+    const prevFitCount = Number(mapContainer.getAttribute("data-fit-bounds-count"));
+    fireEvent.click(screen.getByTestId("map-fit-route-btn"));
+    expect(Number(mapContainer.getAttribute("data-fit-bounds-count"))).toBe(prevFitCount + 1);
+
+    fireEvent.click(screen.getByTestId("map-recenter-gps-btn"));
+    expect(Number(mapContainer.getAttribute("data-recenter-count"))).toBe(1);
 
     // Clear destination
     fireEvent.click(screen.getByTestId("clear-destination-btn"));
@@ -217,7 +251,91 @@ describe("App Destination Search, Map Selection, Live Progress & Off-Route Rerou
     expect(screen.queryByTestId("planning-map-destination")).not.toBeInTheDocument();
   });
 
-  it("selects a destination by clicking the planning map, tracks live GPS progress, and reroutes only when off-route", async () => {
+  it("supports confirming the selected destination before requesting a route, and rejects invalid destination coordinates", async () => {
+    const clock = new ManualClock(60_000);
+    let calcCalls = 0;
+    const baseRouter = new SyntheticFixtureMapProvider(DEFAULT_VN_FIXTURE, clock);
+    const spyRouter: MapRouteProvider = {
+      ...baseRouter,
+      id: baseRouter.id,
+      label: baseRouter.label,
+      isSynthetic: baseRouter.isSynthetic,
+      attribution: baseRouter.attribution,
+      fetchRoute: (q) => baseRouter.fetchRoute(q),
+      calculateRoute: async (q) => {
+        calcCalls += 1;
+        return baseRouter.calculateRoute(q);
+      },
+    };
+
+    const badAndGoodGeocoder: GeocodingProvider = {
+      id: "test-geo",
+      label: "Test Geocoder",
+      isSynthetic: true,
+      attribution: "Test",
+      search: async (): Promise<GeocodingCandidate[]> => [
+        {
+          id: "valid-dest",
+          name: "Hồ Hoàn Kiếm",
+          displayName: "Hoàn Kiếm, Hà Nội",
+          location: { latitude: 21.0285, longitude: 105.8525 },
+          isSynthetic: true,
+          attribution: "Test",
+        },
+        {
+          id: "invalid-dest",
+          name: "Corrupted Place",
+          displayName: "Out of bounds",
+          location: { latitude: 999, longitude: 105.85 },
+          isSynthetic: true,
+          attribution: "Test",
+        },
+      ],
+    };
+
+    render(
+      <App
+        simulator={new SimulatorService({ clock })}
+        geocodingProvider={badAndGoodGeocoder}
+        routingProvider={spyRouter}
+        warningBase={instant}
+        clock={clock}
+      />,
+    );
+
+    // Enable "Confirm destination before requesting route"
+    fireEvent.click(screen.getByTestId("confirm-before-route-toggle"));
+
+    const input = screen.getByLabelText(/Search destination/i);
+    fireEvent.change(input, { target: { value: "Hoan Kiem" } });
+    fireEvent.click(screen.getByTestId("dest-search-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("search-result-valid-dest")).toBeInTheDocument();
+    });
+
+    // Selecting valid destination while confirm-before-route is active sets pin without calling router yet
+    fireEvent.click(screen.getByTestId("search-result-valid-dest"));
+    expect(calcCalls).toBe(0);
+    expect(screen.getByTestId("selected-destination-label")).toHaveTextContent("Hồ Hoàn Kiếm");
+    expect(screen.getByTestId("planning-map-destination")).toBeInTheDocument();
+    expect(screen.getByTestId("confirm-route-btn")).toBeInTheDocument();
+
+    // Clicking "Confirm & calculate route" triggers route calculation
+    fireEvent.click(screen.getByTestId("confirm-route-btn"));
+    await waitFor(() => {
+      expect(screen.getByTestId("planner-route-status")).toHaveTextContent("ACTIVE");
+    });
+    expect(calcCalls).toBe(1);
+
+    // Selecting corrupted destination coordinate rejects cleanly without calling router
+    fireEvent.click(screen.getByTestId("search-result-invalid-dest"));
+    expect(calcCalls).toBe(1);
+    expect(screen.getByTestId("planner-route-status")).toHaveTextContent("ERROR");
+    expect(screen.getByTestId("route-error")).toHaveTextContent(/Invalid destination coordinates/i);
+  });
+
+  it("selects a destination by clicking the Leaflet map, updates GPS without recreating the map instance, pauses on GPS loss, and reroutes when off-route", async () => {
     const clock = new ManualClock(100_000);
     let socket: FakeSocket | null = null;
     const liveFactory = () =>
@@ -323,7 +441,7 @@ describe("App Destination Search, Map Selection, Live Progress & Off-Route Rerou
     expect(screen.getByTestId("route-status")).toHaveTextContent("NAV ACTIVE");
     expect(screen.getByTestId("turn-arrow")).toHaveAttribute("data-direction", "RIGHT");
 
-    // Normal on-route GPS movement (100m north) updates distance without making a new routing request
+    // Normal on-route GPS movement (100m north) updates distance without making a new routing request or recreating the Leaflet map
     const onRoute100m = fromLocalMeters(origin, 0, 100);
     act(() => {
       clock.advance(1000);
@@ -338,8 +456,26 @@ describe("App Destination Search, Map Selection, Live Progress & Off-Route Rerou
         phoneSeq: 2,
       });
     });
-    expect(calcCount).toBe(1); // No redundant route request!
+    expect(calcCount).toBe(1);
+    expect(screen.getByTestId("planning-map-container")).toHaveAttribute("data-map-init-count", "1");
     expect(screen.getByTestId("distance-value")).toHaveTextContent(/^10[01] m$/);
+    expect(screen.getByTestId("route-progress-freshness")).toHaveTextContent("Current (GPS ACTIVE)");
+
+    // Simulate phone GPS loss (poor accuracy > 100m -> gpsStatus: "LOST") -> route progress is marked Paused (GPS LOST / Stale) while keeping WebSocket connection intact
+    act(() => {
+      clock.advance(500);
+      socket!.receive({
+        type: "gps",
+        latitude: onRoute100m.latitude,
+        longitude: onRoute100m.longitude,
+        speedMps: 0,
+        headingDegrees: 0,
+        accuracyMeters: 250,
+        phoneSessionId: "s1",
+        phoneSeq: 3,
+      });
+    });
+    expect(screen.getByTestId("route-progress-freshness")).toHaveTextContent(/Paused/i);
 
     // 3 consecutive off-route samples (150m west of route) trigger automatic reroute
     const offRouteWest = fromLocalMeters(origin, -150, 100);
@@ -354,7 +490,7 @@ describe("App Destination Search, Map Selection, Live Progress & Off-Route Rerou
           headingDegrees: 270,
           accuracyMeters: 5,
           phoneSessionId: "s1",
-          phoneSeq: 3 + i,
+          phoneSeq: 4 + i,
         });
       });
     }
@@ -362,20 +498,25 @@ describe("App Destination Search, Map Selection, Live Progress & Off-Route Rerou
     await waitFor(() => {
       expect(calcCount).toBe(2);
     });
+    expect(screen.getByTestId("planning-map-container")).toHaveAttribute("data-map-init-count", "1");
   });
 
-  it("handles routing provider failure gracefully without crashing", async () => {
+  it("handles routing provider failure gracefully and supports retrying route calculation", async () => {
     const clock = new ManualClock(10_000);
-    const failingRouter: MapRouteProvider = {
-      id: "fail-router",
-      label: "Failing Router",
+    let shouldFail = true;
+    const baseRouter = new SyntheticFixtureMapProvider(DEFAULT_VN_FIXTURE, clock);
+    const flakyRouter: MapRouteProvider = {
+      id: "flaky-router",
+      label: "Flaky Router",
       isSynthetic: false,
       attribution: "Test",
-      fetchRoute: async () => {
-        throw new Error("Routing service unreachable");
+      fetchRoute: async (q) => {
+        if (shouldFail) throw new Error("Routing service unreachable");
+        return baseRouter.fetchRoute(q);
       },
-      calculateRoute: async () => {
-        throw new Error("Routing service unreachable");
+      calculateRoute: async (q) => {
+        if (shouldFail) throw new Error("Routing service unreachable");
+        return baseRouter.calculateRoute(q);
       },
     };
 
@@ -383,7 +524,7 @@ describe("App Destination Search, Map Selection, Live Progress & Off-Route Rerou
       <App
         simulator={new SimulatorService({ clock })}
         geocodingProvider={new SyntheticVnGeocodingProvider()}
-        routingProvider={failingRouter}
+        routingProvider={flakyRouter}
         warningBase={instant}
         clock={clock}
       />,
@@ -395,5 +536,14 @@ describe("App Destination Search, Map Selection, Live Progress & Off-Route Rerou
       expect(screen.getByTestId("planner-route-status")).toHaveTextContent("ERROR");
     });
     expect(screen.getByTestId("route-error")).toHaveTextContent(/Routing service unreachable/i);
+
+    // Recover and click Retry route
+    shouldFail = false;
+    fireEvent.click(screen.getByTestId("retry-route-btn"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("planner-route-status")).toHaveTextContent("ACTIVE");
+    });
+    expect(screen.queryByTestId("route-error")).not.toBeInTheDocument();
   });
 });

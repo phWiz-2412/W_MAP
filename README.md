@@ -57,10 +57,10 @@ docs/
    - **Displacement Speed Fallback:** When iOS Safari reports `coords.speed === null` during low-speed starts, `GpsReporter` derives speed (`speedSource: "derived"`) and heading from consecutive high-accuracy fixes with jitter filtering.
    - **Session-Safe Sequence Filtering:** Tracks `phoneSessionId` and `phoneSeq` so restarting GPS on the phone cleanly resets sequence validation without dropping fixes.
    - **Clock-Domain-Separated Latency Telemetry:** Displays phone sample age, phone JS delay, relay→simulator transit, simulator processing, WebSocket ping RTT, update frequency (Hz), and GPS accuracy.
-3. **Destination Search, Interactive Planning Map & Turn-by-Turn Navigation:**
-   - **Destination Search (`GeocodingProvider`):** Search by place name, street address, or POI using `SyntheticVnGeocodingProvider` (offline, diacritic-insensitive, includes disambiguation for duplicate street names like *Lê Lợi* in HCMC vs. Hanoi) or `NominatimGeocodingProvider` (online OpenStreetMap Nominatim).
-   - **Interactive Planning Map (`InteractivePlanningMap`):** Separate from the 240×240 device screen; supports click-to-set-destination, zoom (`+`/`-`/`Fit`), pan, origin/current/destination markers, and route overview.
-   - **Route Calculation (`MapRouteProvider.calculateRoute`) & Live Progress (`evaluateRouteProgress`):** Computes validated multi-step routes via `SyntheticFixtureMapProvider` (offline) or `OsrmRouteProvider` (online OSRM), tracks active step and remaining turn distance from live or simulated GPS, pauses progress when GPS is lost, and triggers automatic rerouting after 3 consecutive off-route GPS fixes without polling on every tick.
+3. **Destination Search, Real Interactive Street Map (Leaflet + OpenStreetMap) & Turn-by-Turn Navigation:**
+   - **Destination Search (`GeocodingProvider`):** Search by place name, street address, or POI using `SyntheticVnGeocodingProvider` (offline, diacritic-insensitive, includes disambiguation for duplicate street names like *Lê Lợi* in HCMC vs. Hanoi) or `NominatimGeocodingProvider` (online OpenStreetMap Nominatim). Includes loading, empty, error, and retry states, plus optional destination confirmation before requesting a route.
+   - **Real Interactive Street Map (`InteractivePlanningMap` via Leaflet + OpenStreetMap):** Displays real OpenStreetMap street tiles (`https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png`, attribution `© OpenStreetMap contributors (ODbL)`), pan/zoom, click/tap-to-select-destination with coordinate validation, `Recenter GPS` and `Fit Route` controls, auto-fit route bounds when a route is calculated, active maneuver highlight, current GPS marker, and destination marker. Updates markers and route polylines imperatively without recreating the Leaflet map instance on 1 Hz GPS ticks.
+   - **Route Calculation (`MapRouteProvider.calculateRoute`) & Synchronized HUD Progress (`evaluateRouteProgress`):** Computes validated multi-step routes via `SyntheticFixtureMapProvider` (offline) or `OsrmRouteProvider` (online OSRM), displays distinct next-turn distance vs. total remaining distance, synchronizes the large Leaflet street map with the 240×240 `TURN HUD` and `MAP HUD`, pauses progress when GPS is lost/stale, and triggers automatic rerouting after 3 consecutive off-route GPS fixes without polling on every tick.
 4. **Deterministic Vietnamese Scenario Fixtures (Synthetic):**
    - Built-in validated JSON presets in `apps/simulator/src/fixtures/vn/` (`vn-left-right-turns`, `vn-urban-straight`, `vn-roundabout`, `vn-missing-route`, `vn-gps-loss`, `vn-stale-data`, `vn-unknown-speed-limit`) plus custom `.json` fixture upload.
 5. **Speed-Warning Engine (`@w-map/navigation-core`):**
@@ -68,11 +68,17 @@ docs/
 
 ## Troubleshooting Live iPhone GPS & WebSocket Relay
 
-1. Start the HTTPS server on Windows: `npm run dev:phone`.
-2. Ensure the Windows PC and iPhone are on the **same Wi-Fi network** (disable client isolation / VPNs) and allow port `5173` through Windows Defender Firewall if prompted.
-3. Open `https://<PC-LAN-IP>:5173/phone.html` in **iPhone Safari**, accept the self-signed local certificate warning, tap **Start sending GPS**, and grant Location permission (**Precise Location: ON**).
-4. On the PC simulator (`https://localhost:5173`), switch the top toggle to **Live Phone GPS (iPhone)**.
-5. Inspect the **Latency & Telemetry Diagnostics** card:
-   - If **Ping RTT** is high (>100 ms), check Wi-Fi signal strength.
-   - If **Speed source** reads `derived (Δpos/Δt)`, iOS Safari returned `coords.speed = null` and W_MAP computed speed from consecutive coordinates.
-   - If `GPS LOST (accuracy Xm > 100m)` appears indoors, test outdoors with a clear sky view so GPS accuracy drops below 35–100 m.
+1. **Stop any existing `npm run dev` server first.** Both the PC simulator and the iPhone must connect to the **same** HTTPS server process (`npm run dev:phone` on port `5173`, enforced with `strictPort: true`). Running `npm run dev` (HTTP) and `npm run dev:phone` (HTTPS) in separate terminals creates separate in-memory relays.
+2. Start the single shared HTTPS server on Windows:
+   ```powershell
+   npm run dev:phone
+   ```
+   Note the `Network` URL printed by Vite (for example, `https://192.168.1.25:5173/`).
+3. Ensure the Windows PC and iPhone are on the **same Wi-Fi network** (disable client isolation / VPNs) and allow port `5173` through Windows Defender Firewall if prompted.
+4. On the **Windows PC**, open `https://<PC-LAN-IP>:5173/` (or `https://localhost:5173/` on the same server process), accept the local certificate warning, and click **Live phone GPS**.
+5. On the **iPhone in Safari**, open `https://<PC-LAN-IP>:5173/phone.html`, accept the certificate warning, tap **Start sending GPS**, and grant Location permission (**Settings > Privacy & Security > Location Services > Safari Websites > While Using the App**, with **Precise Location: ON**).
+6. Inspect the **Latency & Telemetry Diagnostics** card on the PC and the status line on the iPhone:
+   - `HEALTHY_LIVE_GPS`: Phone is registered on the relay (`phones on relay: 1`), iPhone shows `State: Sending GPS` and `1 PC display linked`, and `Fixes accepted` increments on every GPS update.
+   - `PHONE_ABSENT_FROM_RELAY`: PC display WebSocket is open, but `0` phones are connected to this relay instance. Check that the iPhone opened `/phone.html` on the exact same `https://<PC-LAN-IP>:5173` server and tapped **Start sending GPS**.
+   - `TRANSPORT_CONNECTED_NO_GPS`: Phone is connected to the relay, waiting for iOS Safari to deliver its first GPS fix.
+   - `GPS_DATA_STALE`: No fresh GPS fix within `3000 ms` (or accuracy > `100 m`). Move outdoors with a clear sky view.

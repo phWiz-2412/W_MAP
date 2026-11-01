@@ -1,4 +1,13 @@
-import type { NavigationData } from "../domain/types";
+import {
+  NAVIGATION_MODES,
+  ROUTE_STATUSES,
+  TURN_DIRECTIONS,
+  type NavigationData,
+  type NavigationMode,
+  type RoutePoint,
+  type RouteStatus,
+  type TurnDirection,
+} from "../domain/types";
 import type { ValidationResult } from "../validation/validateNavigation";
 
 /**
@@ -28,6 +37,15 @@ export interface GpsFixMessage {
   phoneSessionId?: string | null;
   phoneSeq?: number | null;
   speedSource?: "native" | "derived" | "none";
+  /** Optional phone-computed turn-by-turn guidance ("Phone as Brain" SteedPilot mode). */
+  turnDirection?: TurnDirection;
+  distanceToTurnMeters?: number | null;
+  routeStatus?: RouteStatus;
+  routePoints?: RoutePoint[];
+  destinationName?: string | null;
+  instruction?: string | null;
+  remainingDistanceMeters?: number | null;
+  displayMode?: NavigationMode;
 }
 
 const isNum = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
@@ -73,6 +91,54 @@ export function validateGpsFix(input: unknown): ValidationResult<GpsFixMessage> 
   ) {
     errors.push('speedSource must be "native", "derived", or "none"');
   }
+  if (m.turnDirection !== undefined && !(TURN_DIRECTIONS as readonly unknown[]).includes(m.turnDirection)) {
+    errors.push("turnDirection invalid");
+  }
+  if (!isOptNonNegNum(m.distanceToTurnMeters)) {
+    errors.push("distanceToTurnMeters must be >= 0 or null");
+  }
+  if (m.routeStatus !== undefined && !(ROUTE_STATUSES as readonly unknown[]).includes(m.routeStatus)) {
+    errors.push("routeStatus invalid");
+  }
+  if (m.displayMode !== undefined && !(NAVIGATION_MODES as readonly unknown[]).includes(m.displayMode)) {
+    errors.push("displayMode invalid");
+  }
+  if (m.destinationName !== undefined && m.destinationName !== null && typeof m.destinationName !== "string") {
+    errors.push("destinationName must be a string or null");
+  }
+  if (m.instruction !== undefined && m.instruction !== null && typeof m.instruction !== "string") {
+    errors.push("instruction must be a string or null");
+  }
+  if (!isOptNonNegNum(m.remainingDistanceMeters)) {
+    errors.push("remainingDistanceMeters must be >= 0 or null");
+  }
+  let validatedPoints: RoutePoint[] | undefined;
+  if (m.routePoints !== undefined) {
+    if (!Array.isArray(m.routePoints) || m.routePoints.length > 64) {
+      errors.push("routePoints must be an array of at most 64 points");
+    } else {
+      validatedPoints = [];
+      for (const pt of m.routePoints) {
+        if (
+          typeof pt !== "object" ||
+          pt === null ||
+          !isNum((pt as Record<string, unknown>).latitude) ||
+          !isNum((pt as Record<string, unknown>).longitude) ||
+          ((pt as Record<string, unknown>).latitude as number) < -90 ||
+          ((pt as Record<string, unknown>).latitude as number) > 90 ||
+          ((pt as Record<string, unknown>).longitude as number) < -180 ||
+          ((pt as Record<string, unknown>).longitude as number) > 180
+        ) {
+          errors.push("routePoints contains invalid coordinate");
+          break;
+        }
+        validatedPoints.push({
+          latitude: (pt as Record<string, unknown>).latitude as number,
+          longitude: (pt as Record<string, unknown>).longitude as number,
+        });
+      }
+    }
+  }
 
   if (errors.length > 0) return { ok: false, errors };
 
@@ -93,6 +159,16 @@ export function validateGpsFix(input: unknown): ValidationResult<GpsFixMessage> 
   if (m.speedSource !== undefined) {
     out.speedSource = m.speedSource as "native" | "derived" | "none";
   }
+  if (m.turnDirection !== undefined) out.turnDirection = m.turnDirection as TurnDirection;
+  if (m.distanceToTurnMeters !== undefined) out.distanceToTurnMeters = m.distanceToTurnMeters as number | null;
+  if (m.routeStatus !== undefined) out.routeStatus = m.routeStatus as RouteStatus;
+  if (validatedPoints !== undefined) out.routePoints = validatedPoints;
+  if (m.destinationName !== undefined) out.destinationName = m.destinationName as string | null;
+  if (m.instruction !== undefined) out.instruction = m.instruction as string | null;
+  if (m.remainingDistanceMeters !== undefined) {
+    out.remainingDistanceMeters = m.remainingDistanceMeters as number | null;
+  }
+  if (m.displayMode !== undefined) out.displayMode = m.displayMode as NavigationMode;
 
   return { ok: true, value: out };
 }
@@ -114,6 +190,16 @@ export interface LiveGpsConfig {
 
 export const DEFAULT_LIVE_GPS_CONFIG: LiveGpsConfig = { gpsTimeoutMs: 3000, maxAccuracyMeters: 100 };
 
+export type DisplaySocketState = "connecting" | "connected" | "reconnecting" | "disconnected" | "error";
+
+export type LiveDiagnosticStatus =
+  | "DISCONNECTED_FROM_RELAY"
+  | "PHONE_ABSENT_FROM_RELAY"
+  | "TRANSPORT_CONNECTED_NO_GPS"
+  | "GPS_PACKET_REJECTED"
+  | "GPS_DATA_STALE"
+  | "HEALTHY_LIVE_GPS";
+
 /**
  * Measurable latency and telemetry metrics for the live GPS pipeline.
  * Note on clock domains:
@@ -134,7 +220,7 @@ export interface LiveLatencyMetrics {
   simulatorProcessingMs: number | null;
   /** Time elapsed on PC since the last valid GPS fix arrived (ms, PC clock). */
   timeSinceLastFixMs: number | null;
-  /** Time elapsed on PC since any relay message arrived (ms, PC clock). */
+  /** Time elapsed on PC since the last GPS packet arrived (ms, PC clock; excludes ping/pong/presence control frames). */
   timeSinceLastPacketMs: number | null;
   /** Measured WebSocket round-trip time (RTT) via echo ping (ms, single clock domain). */
   roundTripPingMs: number | null;
@@ -148,6 +234,28 @@ export interface LiveLatencyMetrics {
   droppedOutOfOrder: number;
   /** Speed source of the latest fix ("native" from CoreLocation, "derived" from Haversine fallback, or "none"). */
   speedSource: "native" | "derived" | "none";
+  /** Current state of the PC simulator's WebSocket connection to the relay. */
+  displaySocketState?: DisplaySocketState;
+  /** Authoritative number of phone clients currently connected to the same relay instance. */
+  relayPhoneCount?: number;
+  /** Sanitized relay WebSocket endpoint URL. */
+  relayEndpoint?: string;
+  /** Phone-clock timestamp (ms) of the last accepted phone GPS send. */
+  lastPhoneSendAtMs?: number | null;
+  /** Last connection or validation error message, if any. */
+  lastError?: string | null;
+  /** High-level diagnostic state distinguishing transport, presence, rejection, staleness, and healthy flow. */
+  diagnosticStatus?: LiveDiagnosticStatus;
+  /** Human-readable explanation of the current live GPS link state. */
+  diagnosticSummary?: string;
+  /** Active destination name computed and sent by the iPhone ("Phone as Brain"). */
+  phoneDestinationName?: string | null;
+  /** Active turn instruction computed and sent by the iPhone. */
+  phoneInstruction?: string | null;
+  /** Remaining distance to destination (m) computed by the iPhone. */
+  phoneRemainingDistanceMeters?: number | null;
+  /** Display mode ("TURN" | "MAP") requested by the iPhone companion app. */
+  phoneDisplayMode?: NavigationMode | null;
 }
 
 /** m/s -> whole km/h. Negative, non-finite or implausible (>300 km/h) values become null. */
@@ -197,10 +305,17 @@ export function buildLiveNavigationData(
   config: LiveGpsConfig = DEFAULT_LIVE_GPS_CONFIG,
 ): NavigationData {
   const { fix, fixReceivedAtMs } = state;
+  const receiverAgeMs = fixReceivedAtMs !== null ? Math.max(0, nowMs - fixReceivedAtMs) : Infinity;
+  const phoneSampleAgeMs =
+    fix !== null && fix.phoneReceivedAtMs != null && fix.sampleTimestampMs != null
+      ? Math.max(0, fix.phoneReceivedAtMs - fix.sampleTimestampMs)
+      : 0;
+  const totalSampleAgeMs = receiverAgeMs + phoneSampleAgeMs;
   const fresh =
     fix !== null &&
     fixReceivedAtMs !== null &&
-    nowMs - fixReceivedAtMs <= config.gpsTimeoutMs &&
+    receiverAgeMs <= config.gpsTimeoutMs &&
+    totalSampleAgeMs <= config.gpsTimeoutMs &&
     (fix.accuracyMeters === null || fix.accuracyMeters <= config.maxAccuracyMeters);
   const heading = fix?.headingDegrees;
   return {
@@ -208,15 +323,15 @@ export function buildLiveNavigationData(
     timestamp: nowMs,
     currentSpeedKmh: fix ? mpsToKmh(fix.speedMps) : null,
     speedLimitKmh: null,
-    turnDirection: "STRAIGHT",
-    distanceToTurnMeters: null,
+    turnDirection: fix?.turnDirection ?? "STRAIGHT",
+    distanceToTurnMeters: fix?.distanceToTurnMeters ?? null,
     latitude: fix ? fix.latitude : null, // last known position when GPS is LOST
     longitude: fix ? fix.longitude : null,
     headingDegrees: heading !== null && heading !== undefined && heading >= 0 && heading < 360 ? heading : null,
     gpsStatus: fresh ? "ACTIVE" : "LOST",
     bleStatus: state.linkConnected ? "CONNECTED" : "DISCONNECTED",
-    routeStatus: "INACTIVE",
+    routeStatus: fix?.routeStatus ?? "INACTIVE",
     speedLimitStatus: "UNKNOWN",
-    routePoints: [],
+    routePoints: fix?.routePoints ?? [],
   };
 }

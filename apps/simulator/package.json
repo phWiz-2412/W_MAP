@@ -13,7 +13,9 @@
     "dev:phone": "vite --host --mode phone"
   },
   "dependencies": {
+    "@types/leaflet": "^1.9.22",
     "@w-map/navigation-core": "*",
+    "leaflet": "^1.9.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "ws": "^8.22.1"

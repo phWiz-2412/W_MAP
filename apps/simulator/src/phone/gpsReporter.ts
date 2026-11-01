@@ -2,6 +2,10 @@ import {
   bearingDegrees,
   haversineDistanceMeters,
   type GpsFixMessage,
+  type NavigationMode,
+  type RoutePoint,
+  type RouteStatus,
+  type TurnDirection,
 } from "@w-map/navigation-core";
 
 /** The subset of the browser GeolocationCoordinates we use (also easy to fake in tests). */
@@ -25,6 +29,14 @@ export interface GpsMessageBuildOptions {
   phoneSessionId?: string | null;
   phoneSeq?: number | null;
   previousSample?: PositionSampleLike | null;
+  turnDirection?: TurnDirection;
+  distanceToTurnMeters?: number | null;
+  routeStatus?: RouteStatus;
+  routePoints?: RoutePoint[];
+  destinationName?: string | null;
+  instruction?: string | null;
+  remainingDistanceMeters?: number | null;
+  displayMode?: NavigationMode;
 }
 
 const finiteOrNull = (v: number | null): number | null => (v !== null && Number.isFinite(v) ? v : null);
@@ -123,6 +135,16 @@ export function coordsToGpsMessage(c: CoordsLike, options: GpsMessageBuildOption
   if (options.sampleTimestampMs !== undefined || options.previousSample !== undefined) {
     msg.speedSource = speedSource;
   }
+  if (options.turnDirection !== undefined) msg.turnDirection = options.turnDirection;
+  if (options.distanceToTurnMeters !== undefined) msg.distanceToTurnMeters = options.distanceToTurnMeters;
+  if (options.routeStatus !== undefined) msg.routeStatus = options.routeStatus;
+  if (options.routePoints !== undefined) msg.routePoints = options.routePoints;
+  if (options.destinationName !== undefined) msg.destinationName = options.destinationName;
+  if (options.instruction !== undefined) msg.instruction = options.instruction;
+  if (options.remainingDistanceMeters !== undefined) {
+    msg.remainingDistanceMeters = options.remainingDistanceMeters;
+  }
+  if (options.displayMode !== undefined) msg.displayMode = options.displayMode;
 
   return msg;
 }

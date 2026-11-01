@@ -25,6 +25,8 @@ interface Props {
   /** Name of the phone link shown in status/banners ("SIM BLE" in simulation). */
   linkLabel?: string;
   backdropRoads?: readonly BackdropRoad[];
+  /** Map scale in meters per logical pixel (default 2). */
+  metersPerPixel?: number;
   /** How often packet age is re-checked. */
   recheckMs?: number;
 }
@@ -79,6 +81,7 @@ export function NavigationDisplay({
   clock = systemClock,
   linkLabel = "SIM BLE",
   backdropRoads,
+  metersPerPixel = 2,
   recheckMs = 500,
 }: Props) {
   const speedState = useSpeedState(data, warningConfig, clock, recheckMs);
@@ -103,7 +106,13 @@ export function NavigationDisplay({
           {mode === "TURN" ? (
             <TurnDisplay data={data} speedState={speedState} linkLabel={linkLabel} />
           ) : (
-            <MapDisplay data={data} speedState={speedState} linkLabel={linkLabel} backdropRoads={backdropRoads} />
+            <MapDisplay
+              data={data}
+              speedState={speedState}
+              linkLabel={linkLabel}
+              backdropRoads={backdropRoads}
+              metersPerPixel={metersPerPixel}
+            />
           )}
         </>
       ) : (

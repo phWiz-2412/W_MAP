@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   isRouteUsable,
   projectPoint,
@@ -22,36 +23,60 @@ interface Props {
 
 /** Where the current position is drawn on the 240x240 display. */
 const ANCHOR: ScreenPoint = [120, 140];
+const EMPTY_ROADS: readonly BackdropRoad[] = [];
 
 const toPath = (pts: readonly ScreenPoint[]) => pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
 
 /** MAP mode body: heading-up map centered on the current position. */
-export function MapDisplay({ data, speedState, linkLabel = "SIM BLE", backdropRoads = [], metersPerPixel = 2 }: Props) {
+export function MapDisplay({ data, speedState, linkLabel = "SIM BLE", backdropRoads = EMPTY_ROADS, metersPerPixel = 2 }: Props) {
   const style = STATE_STYLES[speedState];
   const linkDown = speedState === "DISCONNECTED";
   const navActive = data.routeStatus === "ACTIVE";
   const routeUsable = isRouteUsable(data.routePoints);
   const speedText = linkDown || data.currentSpeedKmh === null ? "--" : String(Math.round(data.currentSpeedKmh));
   const heading = data.headingDegrees ?? 0;
-  const hasPosition = data.latitude !== null && data.longitude !== null;
+  const lat = data.latitude;
+  const lon = data.longitude;
+  const hasPosition = lat !== null && lon !== null;
   const dim = linkDown || style.notCurrent;
 
-  const cfg = hasPosition
-    ? { center: { latitude: data.latitude!, longitude: data.longitude! }, headingDegrees: heading, metersPerPixel, anchor: ANCHOR }
-    : null;
-  const routePath = cfg && navActive && routeUsable ? toPath(projectPolyline(data.routePoints, cfg)) : null;
+  // Memoize road and route SVG path projections so 1 Hz speed/timestamp heartbeats
+  // at the same position & heading do not recompute trig projections.
+  const projected = useMemo(() => {
+    if (lat === null || lon === null) return null;
+    const cfg = {
+      center: { latitude: lat, longitude: lon },
+      headingDegrees: heading,
+      metersPerPixel,
+      anchor: ANCHOR,
+    };
+    const roadPaths = backdropRoads.map((r) => ({
+      id: r.id,
+      kind: r.kind,
+      d: toPath(projectPolyline(r.points, cfg)),
+    }));
+    const roadLabels = backdropRoads
+      .filter((r) => r.name)
+      .map((r) => {
+        const [x, y] = projectPoint(r.points[1] ?? r.points[0]!, cfg);
+        return { id: r.id, name: r.name!, x: x + 8, y: y - 6 };
+      });
+    const routePath = navActive && routeUsable ? toPath(projectPolyline(data.routePoints, cfg)) : null;
+    return { roadPaths, roadLabels, routePath };
+  }, [lat, lon, heading, metersPerPixel, backdropRoads, navActive, routeUsable, data.routePoints]);
+
   const guidanceDimmed = linkDown || !navActive || style.notCurrent;
 
   return (
     <g data-testid="map-display">
       <svg x={0} y={26} width={240} height={200} viewBox="0 26 240 200" overflow="hidden">
         <rect x={0} y={26} width={240} height={200} fill="#10141a" />
-        {cfg && (
+        {projected && (
           <g data-testid="map-roads" opacity={dim ? 0.4 : 1}>
-            {backdropRoads.map((r) => (
+            {projected.roadPaths.map((r) => (
               <path
                 key={r.id}
-                d={toPath(projectPolyline(r.points, cfg))}
+                d={r.d}
                 fill="none"
                 stroke={r.kind === "MAJOR" ? "#4b5565" : "#2c3440"}
                 strokeWidth={r.kind === "MAJOR" ? 9 : 5}
@@ -60,20 +85,15 @@ export function MapDisplay({ data, speedState, linkLabel = "SIM BLE", backdropRo
                 data-road={r.id}
               />
             ))}
-            {backdropRoads
-              .filter((r) => r.name)
-              .map((r) => {
-                const [x, y] = projectPoint(r.points[1] ?? r.points[0]!, cfg);
-                return (
-                  <text key={`l-${r.id}`} x={x + 8} y={y - 6} fontSize={8} fill="#7a8494" data-testid="road-label">
-                    {r.name}
-                  </text>
-                );
-              })}
+            {projected.roadLabels.map((l) => (
+              <text key={`l-${l.id}`} x={l.x} y={l.y} fontSize={8} fill="#7a8494" data-testid="road-label">
+                {l.name}
+              </text>
+            ))}
           </g>
         )}
-        {routePath && (
-          <path d={routePath} fill="none" stroke="#2ea8ff" strokeWidth={5} strokeLinecap="round" strokeLinejoin="round" data-testid="map-route" opacity={dim ? 0.4 : 1} />
+        {projected?.routePath && (
+          <path d={projected.routePath} fill="none" stroke="#2ea8ff" strokeWidth={5} strokeLinecap="round" strokeLinejoin="round" data-testid="map-route" opacity={dim ? 0.4 : 1} />
         )}
 
         {hasPosition ? (

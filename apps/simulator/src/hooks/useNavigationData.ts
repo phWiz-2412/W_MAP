@@ -1,5 +1,12 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { isNewerSequence, parseNavigationPacketJson, type NavigationData } from "@w-map/navigation-core";
+import {
+  isNewerSequence,
+  parseNavigationPacketJson,
+  type LiveLatencyMetrics,
+  type NavigationData,
+  type RoutePoint,
+} from "@w-map/navigation-core";
+import type { LivePhoneProvider } from "../services/LivePhoneProvider";
 import type { NavigationDataProvider } from "../services/NavigationDataProvider";
 import type { SimulatorControls, SimulatorService } from "../services/SimulatorService";
 
@@ -14,7 +21,20 @@ export interface NavigationFeed {
 
 const EMPTY: NavigationFeed = { data: null, rejectedCount: 0, droppedStaleCount: 0, lastError: null };
 
-/** Subscribes to any NavigationDataProvider; validates and sequence-filters packets. */
+function sameRoutePoints(a: readonly RoutePoint[], b: readonly RoutePoint[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i]!.latitude !== b[i]!.latitude || a[i]!.longitude !== b[i]!.longitude) return false;
+  }
+  return true;
+}
+
+/**
+ *Subscribes to any NavigationDataProvider; validates and sequence-filters packets.
+ * Reuses the previous `routePoints` array reference when coordinates have not changed
+ * so downstream memoized map projections do not recompute on every 1 Hz GPS heartbeat.
+ */
 export function useNavigationData(provider: NavigationDataProvider): NavigationFeed {
   const [feed, setFeed] = useState<NavigationFeed>(EMPTY);
 
@@ -27,13 +47,20 @@ export function useNavigationData(provider: NavigationDataProvider): NavigationF
         setFeed((f) => ({ ...f, rejectedCount: f.rejectedCount + 1, lastError: result.errors.join("; ") }));
         return;
       }
-      const data = result.value.data;
-      if (!isNewerSequence(lastSequence, data.sequenceNumber)) {
+      const incoming = result.value.data;
+      if (!isNewerSequence(lastSequence, incoming.sequenceNumber)) {
         setFeed((f) => ({ ...f, droppedStaleCount: f.droppedStaleCount + 1 }));
         return;
       }
-      lastSequence = data.sequenceNumber;
-      setFeed((f) => ({ ...f, data }));
+      lastSequence = incoming.sequenceNumber;
+      setFeed((f) => {
+        const prev = f.data;
+        const data =
+          prev && sameRoutePoints(prev.routePoints, incoming.routePoints)
+            ? { ...incoming, routePoints: prev.routePoints }
+            : incoming;
+        return { ...f, data };
+      });
     });
   }, [provider]);
 
@@ -43,4 +70,30 @@ export function useNavigationData(provider: NavigationDataProvider): NavigationF
 /** Reactive view of the simulator's control state. */
 export function useSimulatorControls(sim: SimulatorService): SimulatorControls {
   return useSyncExternalStore(sim.subscribeControls, sim.getControls);
+}
+
+const NO_METRICS: LiveLatencyMetrics = {
+  phoneSampleAgeMs: null,
+  phoneProcessingDelayMs: null,
+  relayToSimulatorMs: null,
+  simulatorProcessingMs: null,
+  timeSinceLastFixMs: null,
+  timeSinceLastPacketMs: null,
+  roundTripPingMs: null,
+  updateFrequencyHz: 0,
+  acceptedFixes: 0,
+  invalidMessages: 0,
+  droppedOutOfOrder: 0,
+  speedSource: "none",
+};
+
+const noopSubscribe = () => () => undefined;
+const getNoMetrics = () => NO_METRICS;
+
+/** Reactive view of live phone GPS latency metrics. */
+export function useLiveLatencyMetrics(live: LivePhoneProvider | null): LiveLatencyMetrics {
+  return useSyncExternalStore(
+    live ? live.subscribeMetrics : noopSubscribe,
+    live ? live.getMetrics : getNoMetrics,
+  );
 }

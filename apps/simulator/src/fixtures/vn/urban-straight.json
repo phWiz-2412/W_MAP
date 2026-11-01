@@ -1,0 +1,72 @@
+{
+  "schemaVersion": 1,
+  "id": "vn-urban-straight",
+  "name": "VN Urban Straight — Corridor (Synthetic)",
+  "description": "SYNTHETIC TEST DATA (not real Vietnamese map data): Straight multi-block urban corridor with 50 km/h urban speed limit.",
+  "region": "VN-Synthetic",
+  "isSynthetic": true,
+  "initialState": {
+    "currentSpeedKmh": 45,
+    "gpsStatus": "ACTIVE",
+    "bleStatus": "CONNECTED",
+    "routeStatus": "ACTIVE",
+    "timestampAgeMs": 0,
+    "progressPercent": 20,
+    "fallbackPosition": { "latitude": 21.0285, "longitude": 105.8542 }
+  },
+  "routePoints": [
+    { "latitude": 21.025, "longitude": 105.8542 },
+    { "latitude": 21.0275, "longitude": 105.8542 },
+    { "latitude": 21.03, "longitude": 105.8542 },
+    { "latitude": 21.0325, "longitude": 105.8542 }
+  ],
+  "steps": [
+    {
+      "atProgressPercent": 0,
+      "turnDirection": "STRAIGHT",
+      "distanceToTurnMeters": 600,
+      "headingDegrees": 0,
+      "instruction": "Continue straight along urban corridor (synthetic)",
+      "speedLimitKmh": 50,
+      "speedLimitStatus": "VALID"
+    },
+    {
+      "atProgressPercent": 50,
+      "turnDirection": "STRAIGHT",
+      "distanceToTurnMeters": 250,
+      "headingDegrees": 0,
+      "instruction": "Keep straight past intersection (synthetic)",
+      "speedLimitKmh": 50,
+      "speedLimitStatus": "VALID"
+    }
+  ],
+  "backdropRoads": [
+    {
+      "id": "main-corridor",
+      "name": "Pho Chinh (Sim)",
+      "kind": "MAJOR",
+      "points": [
+        { "latitude": 21.023, "longitude": 105.8542 },
+        { "latitude": 21.034, "longitude": 105.8542 }
+      ]
+    },
+    {
+      "id": "cross-1",
+      "name": "Ngo 1 (Sim)",
+      "kind": "MINOR",
+      "points": [
+        { "latitude": 21.0275, "longitude": 105.851 },
+        { "latitude": 21.0275, "longitude": 105.8575 }
+      ]
+    },
+    {
+      "id": "cross-2",
+      "name": "Ngo 2 (Sim)",
+      "kind": "MINOR",
+      "points": [
+        { "latitude": 21.03, "longitude": 105.851 },
+        { "latitude": 21.03, "longitude": 105.8575 }
+      ]
+    }
+  ]
+}

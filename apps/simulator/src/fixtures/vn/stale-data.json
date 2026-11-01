@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "vn-stale-data",
+  "name": "VN Stale Navigation Data — Delayed Packet (Synthetic)",
+  "description": "SYNTHETIC TEST DATA (not real Vietnamese map data): Navigation packet timestamp is 10 seconds old and speed limit is marked STALE.",
+  "region": "VN-Synthetic",
+  "isSynthetic": true,
+  "initialState": {
+    "currentSpeedKmh": 72,
+    "gpsStatus": "ACTIVE",
+    "bleStatus": "CONNECTED",
+    "routeStatus": "ACTIVE",
+    "timestampAgeMs": 10000,
+    "progressPercent": 30,
+    "fallbackPosition": { "latitude": 21.0285, "longitude": 105.8542 }
+  },
+  "routePoints": [
+    { "latitude": 21.0285, "longitude": 105.8542 },
+    { "latitude": 21.033, "longitude": 105.8542 }
+  ],
+  "steps": [
+    {
+      "atProgressPercent": 0,
+      "turnDirection": "RIGHT",
+      "distanceToTurnMeters": 400,
+      "headingDegrees": 0,
+      "instruction": "Turn right — packet & limit data stale (synthetic)",
+      "speedLimitKmh": 50,
+      "speedLimitStatus": "STALE"
+    }
+  ]
+}

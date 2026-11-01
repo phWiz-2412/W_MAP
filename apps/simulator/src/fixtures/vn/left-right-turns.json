@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "id": "vn-left-right-turns",
+  "name": "VN Left & Right Turns — District Grid (Synthetic)",
+  "description": "SYNTHETIC TEST DATA (not real Vietnamese map data): Urban grid sequence with a right turn followed by a left turn and speed-limit transition (50 -> 40 km/h).",
+  "region": "VN-Synthetic",
+  "isSynthetic": true,
+  "initialState": {
+    "currentSpeedKmh": 45,
+    "gpsStatus": "ACTIVE",
+    "bleStatus": "CONNECTED",
+    "routeStatus": "ACTIVE",
+    "timestampAgeMs": 0,
+    "progressPercent": 20,
+    "fallbackPosition": { "latitude": 21.0285, "longitude": 105.8542 }
+  },
+  "routePoints": [
+    { "latitude": 21.0285, "longitude": 105.8542 },
+    { "latitude": 21.0312, "longitude": 105.8542 },
+    { "latitude": 21.0339, "longitude": 105.8542 },
+    { "latitude": 21.0339, "longitude": 105.8566 },
+    { "latitude": 21.0339, "longitude": 105.859 },
+    { "latitude": 21.0366, "longitude": 105.859 }
+  ],
+  "steps": [
+    {
+      "atProgressPercent": 0,
+      "turnDirection": "RIGHT",
+      "distanceToTurnMeters": 350,
+      "headingDegrees": 0,
+      "instruction": "Turn right onto cross street (synthetic)",
+      "speedLimitKmh": 50,
+      "speedLimitStatus": "VALID"
+    },
+    {
+      "atProgressPercent": 45,
+      "turnDirection": "LEFT",
+      "distanceToTurnMeters": 220,
+      "headingDegrees": 90,
+      "instruction": "Turn left at next junction (synthetic)",
+      "speedLimitKmh": 40,
+      "speedLimitStatus": "VALID"
+    },
+    {
+      "atProgressPercent": 80,
+      "turnDirection": "STRAIGHT",
+      "distanceToTurnMeters": 120,
+      "headingDegrees": 0,
+      "instruction": "Continue straight to destination (synthetic)",
+      "speedLimitKmh": 40,
+      "speedLimitStatus": "VALID"
+    }
+  ],
+  "backdropRoads": [
+    {
+      "id": "b1",
+      "name": "Main St (Sim)",
+      "kind": "MAJOR",
+      "points": [
+        { "latitude": 21.0258, "longitude": 105.8542 },
+        { "latitude": 21.0375, "longitude": 105.8542 }
+      ]
+    },
+    {
+      "id": "b2",
+      "name": "Ring Rd (Sim)",
+      "kind": "MAJOR",
+      "points": [
+        { "latitude": 21.0339, "longitude": 105.8494 },
+        { "latitude": 21.0339, "longitude": 105.8629 }
+      ]
+    },
+    {
+      "id": "b3",
+      "name": "Park Ln (Sim)",
+      "kind": "MINOR",
+      "points": [
+        { "latitude": 21.0312, "longitude": 105.8503 },
+        { "latitude": 21.0312, "longitude": 105.858 }
+      ]
+    },
+    {
+      "id": "b4",
+      "kind": "MINOR",
+      "points": [
+        { "latitude": 21.0312, "longitude": 105.859 },
+        { "latitude": 21.0375, "longitude": 105.859 }
+      ]
+    }
+  ]
+}

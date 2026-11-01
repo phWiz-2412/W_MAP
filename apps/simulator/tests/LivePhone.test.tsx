@@ -11,7 +11,11 @@ class FakeSocket implements SocketLike {
   onclose: (() => void) | null = null;
   onmessage: ((ev: { data: unknown }) => void) | null = null;
   onerror: (() => void) | null = null;
+  sent: string[] = [];
   closed = false;
+  send(data: string) {
+    this.sent.push(data);
+  }
   close() {
     this.closed = true;
     this.onclose?.();
@@ -42,7 +46,21 @@ const setup = () => {
   });
   return { clock, sockets, provider, packets, last: () => packets.at(-1)! };
 };
-const fix = { type: "gps", latitude: 21.03, longitude: 105.85, speedMps: 10, headingDegrees: 90, accuracyMeters: 5 };
+const fix = {
+  type: "gps",
+  latitude: 21.03,
+  longitude: 105.85,
+  speedMps: 10,
+  headingDegrees: 90,
+  accuracyMeters: 5,
+  sampleTimestampMs: 9950,
+  phoneReceivedAtMs: 9975,
+  phoneSentAtMs: 9977,
+  relayReceivedAtMs: 9996,
+  phoneSessionId: "sess-1",
+  phoneSeq: 1,
+  speedSource: "native" as const,
+};
 
 describe("LivePhoneProvider", () => {
   it("starts disconnected with no fix, no invented data", () => {
@@ -50,12 +68,45 @@ describe("LivePhoneProvider", () => {
     expect(last()).toMatchObject({ bleStatus: "DISCONNECTED", gpsStatus: "LOST", currentSpeedKmh: null, speedLimitKmh: null, speedLimitStatus: "UNKNOWN" });
   });
 
-  it("reports real speed from a validated fix when the phone is present", () => {
-    const { sockets, last } = setup();
+  it("reports real speed and computes latency metrics within valid clock domains", () => {
+    const { sockets, provider, last } = setup();
     sockets[0]!.open();
     sockets[0]!.receive({ type: "presence", phones: 1 });
     sockets[0]!.receive(fix);
     expect(last()).toMatchObject({ bleStatus: "CONNECTED", gpsStatus: "ACTIVE", currentSpeedKmh: 36, headingDegrees: 90 });
+
+    const m = provider.getMetrics();
+    expect(m.phoneSampleAgeMs).toBe(25); // 9975 - 9950 (phone clock)
+    expect(m.phoneProcessingDelayMs).toBe(2); // 9977 - 9975 (phone clock)
+    expect(m.relayToSimulatorMs).toBe(4); // 10000 - 9996 (PC clock)
+    expect(m.acceptedFixes).toBe(1);
+    expect(m.speedSource).toBe("native");
+  });
+
+  it("measures WebSocket round-trip ping (RTT) in the PC clock domain", () => {
+    const { clock, sockets, provider } = setup();
+    sockets[0]!.open(); // sends initial ping at t=10000
+    clock.advance(14);
+    sockets[0]!.receive({ type: "pong", sentAtMs: 10_000, relayAtMs: 10_007 });
+    expect(provider.getMetrics().roundTripPingMs).toBe(14);
+  });
+
+  it("drops duplicate or out-of-order phoneSeq packets within the same session, and resets on new phoneSessionId", () => {
+    const { sockets, provider, last } = setup();
+    sockets[0]!.open();
+    sockets[0]!.receive({ type: "presence", phones: 1 });
+    sockets[0]!.receive({ ...fix, phoneSessionId: "sess-a", phoneSeq: 5, speedMps: 10 });
+    expect(last().currentSpeedKmh).toBe(36);
+
+    // Duplicate seq 5 and older seq 3 are dropped
+    sockets[0]!.receive({ ...fix, phoneSessionId: "sess-a", phoneSeq: 5, speedMps: 20 });
+    sockets[0]!.receive({ ...fix, phoneSessionId: "sess-a", phoneSeq: 3, speedMps: 25 });
+    expect(provider.droppedOutOfOrder).toBe(2);
+    expect(last().currentSpeedKmh).toBe(36);
+
+    // Phone restarts watcher -> new phoneSessionId "sess-b" with phoneSeq: 1 is accepted
+    sockets[0]!.receive({ ...fix, phoneSessionId: "sess-b", phoneSeq: 1, speedMps: 20 });
+    expect(last().currentSpeedKmh).toBe(72);
   });
 
   it("socket open without a phone is still DISCONNECTED", () => {
@@ -81,16 +132,22 @@ describe("LivePhoneProvider", () => {
     clock.advance(5000);
     provider.emitCurrentForTest();
     expect(last().gpsStatus).toBe("LOST");
-    sockets[0]!.receive({ ...fix, speedMps: 20 });
+    sockets[0]!.receive({ ...fix, phoneSeq: 2, speedMps: 20 });
     expect(last()).toMatchObject({ gpsStatus: "ACTIVE", currentSpeedKmh: 72 });
   });
 
-  it("phone leaving is reported as link DISCONNECTED", () => {
+  it("phone leaving is reported as link DISCONNECTED and resets session sequence gate", () => {
     const { sockets, last } = setup();
     sockets[0]!.open();
     sockets[0]!.receive({ type: "presence", phones: 1 });
+    sockets[0]!.receive({ ...fix, phoneSeq: 10, speedMps: 10 });
     sockets[0]!.receive({ type: "presence", phones: 0 });
     expect(last().bleStatus).toBe("DISCONNECTED");
+
+    // Reconnect starting at seq 1 is accepted
+    sockets[0]!.receive({ type: "presence", phones: 1 });
+    sockets[0]!.receive({ ...fix, phoneSeq: 1, speedMps: 15 });
+    expect(last().currentSpeedKmh).toBe(54);
   });
 
   it("sequence numbers strictly increase", () => {
@@ -104,7 +161,7 @@ describe("LivePhoneProvider", () => {
 });
 
 describe("App live mode", () => {
-  it("switches to live GPS, labels it LIVE, shows real speed and unknown limit", () => {
+  it("switches to live GPS, labels it LIVE, shows real speed, unknown limit, and latency metrics", () => {
     const clock = new ManualClock(10_000);
     let socket: FakeSocket | null = null;
     const factory = () =>
@@ -130,6 +187,8 @@ describe("App live mode", () => {
     expect(screen.getByTestId("limit-value")).toHaveTextContent("--");
     expect(screen.getByTestId("route-status")).toHaveTextContent("NAV OFF");
     expect(screen.getByTestId("navigation-display")).toHaveAttribute("data-speed-state", "UNKNOWN_LIMIT");
+    expect(screen.getByTestId("metric-sample-age")).toHaveTextContent("25 ms");
+    expect(screen.getByTestId("metric-relay-sim")).toHaveTextContent("4 ms");
     act(() => void fireEvent.click(screen.getByRole("button", { name: "Simulator" })));
     expect(screen.getByTestId("source-badge")).toHaveTextContent(/SIMULATED/);
     expect(socket!.closed).toBe(true);

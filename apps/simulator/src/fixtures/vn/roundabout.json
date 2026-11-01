@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "id": "vn-roundabout",
+  "name": "VN Roundabout — Vong Xoay (Synthetic)",
+  "description": "SYNTHETIC TEST DATA (not real Vietnamese map data): Approaching and exiting a multi-lane urban roundabout (vong xoay) with 40 km/h limit.",
+  "region": "VN-Synthetic",
+  "isSynthetic": true,
+  "initialState": {
+    "currentSpeedKmh": 34,
+    "gpsStatus": "ACTIVE",
+    "bleStatus": "CONNECTED",
+    "routeStatus": "ACTIVE",
+    "timestampAgeMs": 0,
+    "progressPercent": 15,
+    "fallbackPosition": { "latitude": 10.772, "longitude": 106.698 }
+  },
+  "routePoints": [
+    { "latitude": 10.7705, "longitude": 106.698 },
+    { "latitude": 10.772, "longitude": 106.698 },
+    { "latitude": 10.7725, "longitude": 106.6984 },
+    { "latitude": 10.773, "longitude": 106.6988 },
+    { "latitude": 10.773, "longitude": 106.701 }
+  ],
+  "steps": [
+    {
+      "atProgressPercent": 0,
+      "turnDirection": "ROUNDABOUT",
+      "distanceToTurnMeters": 180,
+      "headingDegrees": 0,
+      "instruction": "Enter roundabout and take 2nd exit (synthetic)",
+      "speedLimitKmh": 40,
+      "speedLimitStatus": "VALID"
+    },
+    {
+      "atProgressPercent": 60,
+      "turnDirection": "RIGHT",
+      "distanceToTurnMeters": 60,
+      "headingDegrees": 45,
+      "instruction": "Exit roundabout onto radial avenue (synthetic)",
+      "speedLimitKmh": 50,
+      "speedLimitStatus": "VALID"
+    }
+  ],
+  "backdropRoads": [
+    {
+      "id": "vong-xoay-ns",
+      "name": "Dai Lo (Sim)",
+      "kind": "MAJOR",
+      "points": [
+        { "latitude": 10.769, "longitude": 106.698 },
+        { "latitude": 10.776, "longitude": 106.698 }
+      ]
+    },
+    {
+      "id": "vong-xoay-ew",
+      "name": "Duong Vanh Dai (Sim)",
+      "kind": "MAJOR",
+      "points": [
+        { "latitude": 10.773, "longitude": 106.695 },
+        { "latitude": 10.773, "longitude": 106.702 }
+      ]
+    }
+  ]
+}

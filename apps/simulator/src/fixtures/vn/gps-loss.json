@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "vn-gps-loss",
+  "name": "VN GPS Loss — Underpass / Tunnel (Synthetic)",
+  "description": "SYNTHETIC TEST DATA (not real Vietnamese map data): Rider enters an urban underpass and GPS fix is lost; speed warning must be suppressed.",
+  "region": "VN-Synthetic",
+  "isSynthetic": true,
+  "initialState": {
+    "currentSpeedKmh": 65,
+    "gpsStatus": "LOST",
+    "bleStatus": "CONNECTED",
+    "routeStatus": "ACTIVE",
+    "timestampAgeMs": 0,
+    "progressPercent": 40,
+    "fallbackPosition": { "latitude": 21.0285, "longitude": 105.8542 }
+  },
+  "routePoints": [
+    { "latitude": 21.026, "longitude": 105.8542 },
+    { "latitude": 21.031, "longitude": 105.8542 }
+  ],
+  "steps": [
+    {
+      "atProgressPercent": 0,
+      "turnDirection": "STRAIGHT",
+      "distanceToTurnMeters": 500,
+      "headingDegrees": 0,
+      "instruction": "Continue through underpass — GPS signal lost (synthetic)",
+      "speedLimitKmh": 50,
+      "speedLimitStatus": "VALID"
+    }
+  ]
+}

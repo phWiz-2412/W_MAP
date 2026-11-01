@@ -1,4 +1,6 @@
-import { fromLocalMeters, type RoutePoint } from "@w-map/navigation-core";
+import { fromLocalMeters, type BackdropRoad, type RoutePoint } from "@w-map/navigation-core";
+
+export type { BackdropRoad };
 
 /**
  * Deterministic SIMULATED fixtures. The coordinates are arbitrary test values:
@@ -21,13 +23,6 @@ const ROUTE_OFFSETS: readonly Offset[] = [
 ];
 
 export const DEMO_ROUTE: readonly RoutePoint[] = toPoints(ROUTE_OFFSETS);
-
-export interface BackdropRoad {
-  id: string;
-  name?: string;
-  kind: "MAJOR" | "MINOR";
-  points: readonly RoutePoint[];
-}
 
 /** Context roads drawn behind the route in MAP mode (simulated). */
 export const DEMO_BACKDROP: readonly BackdropRoad[] = [

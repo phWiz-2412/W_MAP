@@ -58,3 +58,27 @@ legend { color: var(--muted); font-size: 0.8rem; padding: 0 6px; }
 .source-switch button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .steps { margin: 0; padding-left: 20px; color: var(--muted); font-size: 0.85rem; display: grid; gap: 4px; }
 code { color: var(--text); }
+.right-column { display: grid; gap: 16px; }
+.row { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85rem; }
+.search-row { display: flex; gap: 8px; }
+.search-row input[type="text"] {
+  flex: 1; background: #0e1116; color: var(--text); border: 1px solid #3a4452; border-radius: 8px; padding: 8px; font: inherit;
+}
+.search-results {
+  list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 180px; overflow-y: auto;
+}
+.search-result-btn {
+  width: 100%; text-align: left; display: grid; gap: 2px; cursor: pointer;
+}
+.search-result-btn span { color: var(--muted); font-size: 0.78rem; }
+.planning-map-box { display: grid; gap: 6px; }
+.planning-map-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.map-zoom-btns { display: flex; gap: 4px; }
+.map-zoom-btns button { padding: 4px 8px; font-size: 0.8rem; cursor: pointer; }
+.planning-map-svg {
+  width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; cursor: crosshair; display: block;
+}
+.route-summary {
+  border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: grid; gap: 6px; background: #0e1116;
+}
+

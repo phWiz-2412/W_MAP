@@ -5,6 +5,7 @@ export const TURN_LABELS: Record<TurnDirection, string> = {
   RIGHT: "Turn right",
   STRAIGHT: "Continue straight",
   U_TURN: "Make a U-turn",
+  ROUNDABOUT: "Enter roundabout",
 };
 
 /** Format a distance for the display. null → "--". */
@@ -42,6 +43,14 @@ export function TurnArrow({ direction, color = "#ffffff" }: { direction: TurnDir
         <>
           <path d="M16 36 V-8 Q16 -32 -4 -32 Q-24 -32 -24 -8 V8" {...stroke} />
           <polygon points="-42,6 -6,6 -24,32" fill={color} />
+        </>
+      )}
+      {direction === "ROUNDABOUT" && (
+        <>
+          <circle cx={0} cy={-2} r={20} {...stroke} />
+          <path d="M0 36 V18" {...stroke} />
+          <path d="M14 -16 L24 -26" {...stroke} />
+          <polygon points="14,-34 36,-32 30,-10" fill={color} />
         </>
       )}
     </g>

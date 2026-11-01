@@ -1,10 +1,28 @@
-import { useEffect, useMemo, useState } from "react";
-import { DEFAULT_WARNING_CONFIG, systemClock, type Clock, type WarningConfig } from "@w-map/navigation-core";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  DEFAULT_WARNING_CONFIG,
+  systemClock,
+  type CalculatedRoute,
+  type Clock,
+  type RouteProgressEvaluation,
+  type WarningConfig,
+} from "@w-map/navigation-core";
+import { DestinationNavigationPanel, type ProviderMode } from "./components/DestinationNavigationPanel";
 import { NavigationDisplay } from "./components/NavigationDisplay";
 import { SimulatorPanel } from "./components/SimulatorPanel";
-import { DEMO_BACKDROP } from "./fixtures/demoRoute";
-import { useNavigationData, useSimulatorControls } from "./hooks/useNavigationData";
+import { DEFAULT_VN_FIXTURE } from "./fixtures/vnFixtures";
+import { useLiveLatencyMetrics, useNavigationData, useSimulatorControls } from "./hooks/useNavigationData";
+import {
+  NominatimGeocodingProvider,
+  SyntheticVnGeocodingProvider,
+  type GeocodingProvider,
+} from "./services/GeocodingProvider";
 import { LivePhoneProvider } from "./services/LivePhoneProvider";
+import {
+  OsrmRouteProvider,
+  SyntheticFixtureMapProvider,
+  type MapRouteProvider,
+} from "./services/MapRouteProvider";
 import { SimulatorService } from "./services/SimulatorService";
 
 export type DataSource = "SIMULATOR" | "LIVE_PHONE";
@@ -14,6 +32,10 @@ interface Props {
   simulator?: SimulatorService;
   /** Injectable live provider factory for tests. */
   liveProviderFactory?: () => LivePhoneProvider;
+  /** Optional custom geocoding provider for tests. */
+  geocodingProvider?: GeocodingProvider;
+  /** Optional custom routing provider for tests. */
+  routingProvider?: MapRouteProvider;
   /** Warning configuration baseline (tests use persistenceMs: 0). */
   warningBase?: WarningConfig;
   clock?: Clock;
@@ -25,20 +47,46 @@ const defaultLiveFactory = () => {
   return new LivePhoneProvider({ url: `${proto}://${location.host}/ws?role=display` });
 };
 
+const fmtMs = (v: number | null) => (v === null ? "--" : `${v} ms`);
+
 export default function App({
   simulator,
   liveProviderFactory = defaultLiveFactory,
+  geocodingProvider: customGeocoder,
+  routingProvider: customRouter,
   warningBase = DEFAULT_WARNING_CONFIG,
   clock = systemClock,
   initialSource = "SIMULATOR",
 }: Props) {
   const [sim] = useState(() => simulator ?? new SimulatorService({ heartbeatMs: 1000 }));
   const [source, setSource] = useState<DataSource>(initialSource);
+  const [providerMode, setProviderMode] = useState<ProviderMode>("OFFLINE_SYNTHETIC");
+
   const live = useMemo(() => (source === "LIVE_PHONE" ? liveProviderFactory() : null), [source, liveProviderFactory]);
   const provider = live ?? sim;
+
+  const defaultGeocoder = useMemo<GeocodingProvider>(
+    () =>
+      providerMode === "ONLINE_OSM"
+        ? new NominatimGeocodingProvider()
+        : new SyntheticVnGeocodingProvider(),
+    [providerMode],
+  );
+  const defaultRouter = useMemo<MapRouteProvider>(
+    () =>
+      providerMode === "ONLINE_OSM"
+        ? new OsrmRouteProvider({ clock })
+        : new SyntheticFixtureMapProvider(DEFAULT_VN_FIXTURE, clock),
+    [providerMode, clock],
+  );
+
+  const activeGeocoder = customGeocoder ?? defaultGeocoder;
+  const activeRouter = customRouter ?? defaultRouter;
+
   const [threshold, setThreshold] = useState(warningBase.thresholdKmh);
   const controls = useSimulatorControls(sim);
   const feed = useNavigationData(provider);
+  const liveMetrics = useLiveLatencyMetrics(live);
   const warningConfig = useMemo(() => ({ ...warningBase, thresholdKmh: threshold }), [warningBase, threshold]);
 
   useEffect(() => () => live?.dispose(), [live]);
@@ -46,6 +94,44 @@ export default function App({
 
   const isLive = source === "LIVE_PHONE";
   const mode = controls.mode;
+
+  const handleGuidanceChange = useCallback(
+    (evalResult: RouteProgressEvaluation | null, route: CalculatedRoute | null) => {
+      if (isLive && live) {
+        if (!evalResult || !route) {
+          live.setRouteOverlay({
+            routeStatus: "INACTIVE",
+            distanceToTurnMeters: null,
+            routePoints: [],
+            turnDirection: "STRAIGHT",
+            speedLimitKmh: null,
+            speedLimitStatus: "UNKNOWN",
+          });
+        } else {
+          live.setRouteOverlay({
+            routeStatus: "ACTIVE",
+            turnDirection: evalResult.activeStep.turnDirection,
+            distanceToTurnMeters: evalResult.distanceToNextTurnMeters,
+            routePoints: evalResult.compactRoutePoints,
+            speedLimitKmh: null,
+            speedLimitStatus: "UNKNOWN",
+          });
+        }
+      } else {
+        if (!evalResult || !route) {
+          sim.setCalculatedRoute(null);
+        } else {
+          sim.setCalculatedRoute(route, evalResult);
+        }
+      }
+    },
+    [isLive, live, sim],
+  );
+
+  const currentPosition =
+    feed.data && feed.data.latitude !== null && feed.data.longitude !== null
+      ? { latitude: feed.data.latitude, longitude: feed.data.longitude }
+      : null;
 
   return (
     <div className="app">
@@ -78,7 +164,7 @@ export default function App({
               warningConfig={warningConfig}
               clock={clock}
               linkLabel={isLive ? "PHONE LINK" : "SIM BLE"}
-              backdropRoads={isLive ? undefined : DEMO_BACKDROP}
+              backdropRoads={isLive ? undefined : sim.getBackdropRoads()}
             />
           </div>
           <p className="feed-info" data-testid="feed-info">
@@ -90,39 +176,105 @@ export default function App({
             </p>
           )}
         </section>
-        {isLive ? (
-          <section className="panel" aria-label="Live GPS" data-testid="live-panel">
-            <h2>Live phone GPS</h2>
-            <p className="panel-note">
-              Speed and position come from the phone&apos;s real GPS through a LAN WebSocket relay (not Bluetooth). There is no routing or speed-limit source yet, so the limit stays UNKNOWN and navigation stays OFF.
-            </p>
-            <ol className="steps">
-              <li>
-                Start with <code>npm run dev:phone</code> and note the <code>Network</code> https URL.
-              </li>
-              <li>
-                On the iPhone (same WiFi) open <code>https://&lt;PC-IP&gt;:5173/phone.html</code>, accept the certificate warning, tap Start and allow location.
-              </li>
-              <li>Open this page the same way on the PC and choose Live phone GPS.</li>
-            </ol>
-            <label htmlFor="live-mode">Display mode</label>
-            <select id="live-mode" value={mode} onChange={(e) => sim.update({ mode: e.target.value as typeof mode })}>
-              <option value="TURN">TURN</option>
-              <option value="MAP">MAP</option>
-            </select>
-          </section>
-        ) : (
-          <SimulatorPanel
-            controls={controls}
-            onChange={(p) => sim.update(p)}
-            onReset={() => {
-              sim.reset();
-              setThreshold(warningBase.thresholdKmh);
-            }}
-            warningThresholdKmh={threshold}
-            onThresholdChange={setThreshold}
+
+        <div className="right-column">
+          {isLive ? (
+            <section className="panel" aria-label="Live GPS" data-testid="live-panel">
+              <h2>Live phone GPS &amp; Latency Diagnostics</h2>
+              <p className="panel-note">
+                Speed and position come from the phone&apos;s real GPS through a LAN WebSocket relay (not Bluetooth). Speed limits remain UNKNOWN unless verified.
+              </p>
+              <ol className="steps">
+                <li>
+                  Start with <code>npm run dev:phone</code> and note the <code>Network</code> https URL.
+                </li>
+                <li>
+                  On the iPhone (same WiFi) open <code>https://&lt;PC-IP&gt;:5173/phone.html</code>, accept the certificate warning, tap Start and allow location.
+                </li>
+                <li>Open this page the same way on the PC and choose Live phone GPS.</li>
+              </ol>
+
+              <div className="field">
+                <label htmlFor="live-mode">Display mode</label>
+                <select id="live-mode" value={mode} onChange={(e) => sim.update({ mode: e.target.value as typeof mode })}>
+                  <option value="TURN">TURN</option>
+                  <option value="MAP">MAP</option>
+                </select>
+              </div>
+
+              <fieldset data-testid="live-latency-metrics">
+                <legend>Latency &amp; Telemetry Diagnostics</legend>
+                <div className="row">
+                  <span>GPS sample age (phone clock):</span>
+                  <output data-testid="metric-sample-age">{fmtMs(liveMetrics.phoneSampleAgeMs)}</output>
+                </div>
+                <div className="row">
+                  <span>Phone JS processing delay:</span>
+                  <output data-testid="metric-phone-proc">{fmtMs(liveMetrics.phoneProcessingDelayMs)}</output>
+                </div>
+                <div className="row">
+                  <span>Relay → Simulator transit (PC clock):</span>
+                  <output data-testid="metric-relay-sim">{fmtMs(liveMetrics.relayToSimulatorMs)}</output>
+                </div>
+                <div className="row">
+                  <span>Simulator processing delay:</span>
+                  <output data-testid="metric-sim-proc">{fmtMs(liveMetrics.simulatorProcessingMs)}</output>
+                </div>
+                <div className="row">
+                  <span>WebSocket round-trip ping (RTT):</span>
+                  <output data-testid="metric-rtt">{fmtMs(liveMetrics.roundTripPingMs)}</output>
+                </div>
+                <div className="row">
+                  <span>Time since last GPS fix:</span>
+                  <output data-testid="metric-since-fix">{fmtMs(liveMetrics.timeSinceLastFixMs)}</output>
+                </div>
+                <div className="row">
+                  <span>Time since last packet:</span>
+                  <output data-testid="metric-since-pkt">{fmtMs(liveMetrics.timeSinceLastPacketMs)}</output>
+                </div>
+                <div className="row">
+                  <span>Update frequency / Speed source:</span>
+                  <output data-testid="metric-freq-source">
+                    {liveMetrics.updateFrequencyHz} Hz ({liveMetrics.speedSource})
+                  </output>
+                </div>
+                <div className="row">
+                  <span>Fixes accepted / invalid / out-of-order:</span>
+                  <output data-testid="metric-packet-counts">
+                    {liveMetrics.acceptedFixes} / {liveMetrics.invalidMessages} / {liveMetrics.droppedOutOfOrder}
+                  </output>
+                </div>
+              </fieldset>
+            </section>
+          ) : (
+            <SimulatorPanel
+              controls={controls}
+              activeFixture={sim.getActiveFixture()}
+              onChange={(p) => sim.update(p)}
+              onReset={() => {
+                sim.reset();
+                setThreshold(warningBase.thresholdKmh);
+              }}
+              onLoadFixture={(fixture) => {
+                sim.loadFixture(fixture);
+              }}
+              onLoadFixtureJson={(raw) => sim.loadFixtureJson(raw)}
+              warningThresholdKmh={threshold}
+              onThresholdChange={setThreshold}
+            />
+          )}
+
+          <DestinationNavigationPanel
+            currentPosition={currentPosition}
+            accuracyMeters={isLive ? (live?.getLatestFix()?.accuracyMeters ?? null) : 8}
+            gpsStatus={feed.data?.gpsStatus ?? "LOST"}
+            providerMode={providerMode}
+            onProviderModeChange={customGeocoder || customRouter ? undefined : setProviderMode}
+            geocodingProvider={activeGeocoder}
+            routingProvider={activeRouter}
+            onGuidanceChange={handleGuidanceChange}
           />
-        )}
+        </div>
       </main>
     </div>
   );

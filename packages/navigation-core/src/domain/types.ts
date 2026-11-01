@@ -2,7 +2,7 @@
 
 export type NavigationMode = "TURN" | "MAP";
 
-export const TURN_DIRECTIONS = ["LEFT", "RIGHT", "STRAIGHT", "U_TURN"] as const;
+export const TURN_DIRECTIONS = ["LEFT", "RIGHT", "STRAIGHT", "U_TURN", "ROUNDABOUT"] as const;
 export type TurnDirection = (typeof TURN_DIRECTIONS)[number];
 
 export type GPSStatus = "ACTIVE" | "LOST";

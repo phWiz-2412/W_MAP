@@ -1,12 +1,17 @@
-import { TURN_DIRECTIONS, type NavigationMode } from "@w-map/navigation-core";
+import { useState, type ChangeEvent } from "react";
+import { TURN_DIRECTIONS, type NavigationMode, type RouteFixture } from "@w-map/navigation-core";
+import { VN_ROUTE_FIXTURES, getBuiltInFixtureById } from "../fixtures/vnFixtures";
 import type { SimulatorControls } from "../services/SimulatorService";
 
 const SPEED_LIMIT_OPTIONS: readonly (number | null)[] = [null, 30, 40, 50, 60, 80, 100];
 
 interface Props {
   controls: SimulatorControls;
+  activeFixture?: RouteFixture | null;
   onChange: (patch: Partial<SimulatorControls>) => void;
   onReset: () => void;
+  onLoadFixture?: (fixture: RouteFixture) => void;
+  onLoadFixtureJson?: (rawJson: string) => { ok: boolean; errors?: string[] };
   warningThresholdKmh: number;
   onThresholdChange: (value: number) => void;
 }
@@ -62,7 +67,43 @@ function SelectField<T extends string>({ id, label, value, options, onChange }: 
   );
 }
 
-export function SimulatorPanel({ controls: c, onChange, onReset, warningThresholdKmh, onThresholdChange }: Props) {
+export function SimulatorPanel({
+  controls: c,
+  activeFixture,
+  onChange,
+  onReset,
+  onLoadFixture,
+  onLoadFixtureJson,
+  warningThresholdKmh,
+  onThresholdChange,
+}: Props) {
+  const [fixtureError, setFixtureError] = useState<string | null>(null);
+
+  const handlePresetChange = (id: string) => {
+    setFixtureError(null);
+    const preset = getBuiltInFixtureById(id);
+    if (preset && onLoadFixture) {
+      onLoadFixture(preset);
+    }
+  };
+
+  const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !onLoadFixtureJson) return;
+    const text = await file.text();
+    const res = onLoadFixtureJson(text);
+    if (!res.ok) {
+      setFixtureError(res.errors?.join("; ") ?? "Invalid route fixture JSON");
+    } else {
+      setFixtureError(null);
+    }
+  };
+
+  const currentFixtureDesc =
+    activeFixture?.description ??
+    getBuiltInFixtureById(c.activeFixtureId)?.description ??
+    "SYNTHETIC TEST DATA — not real Vietnamese map data.";
+
   return (
     <form className="panel" aria-label="Simulator controls" onSubmit={(e) => e.preventDefault()}>
       <h2>Simulator controls</h2>
@@ -78,6 +119,36 @@ export function SimulatorPanel({ controls: c, onChange, onReset, warningThreshol
         ]}
         onChange={(mode) => onChange({ mode })}
       />
+
+      <fieldset>
+        <legend>Vietnamese scenario fixtures (synthetic)</legend>
+        <div className="field">
+          <label htmlFor="vn-preset">Synthetic route scenario</label>
+          <select
+            id="vn-preset"
+            value={VN_ROUTE_FIXTURES.some((f) => f.id === c.activeFixtureId) ? c.activeFixtureId : VN_ROUTE_FIXTURES[0]!.id}
+            onChange={(e) => handlePresetChange(e.target.value)}
+          >
+            {VN_ROUTE_FIXTURES.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="panel-note" data-testid="fixture-description">
+          {currentFixtureDesc}
+        </p>
+        <div className="field">
+          <label htmlFor="fixture-file">Load custom JSON fixture</label>
+          <input id="fixture-file" type="file" accept=".json,application/json" onChange={(e) => void handleFileUpload(e)} />
+        </div>
+        {fixtureError && (
+          <p className="feed-error" role="alert" data-testid="fixture-error">
+            Fixture rejected: {fixtureError}
+          </p>
+        )}
+      </fieldset>
 
       <fieldset>
         <legend>Speed</legend>

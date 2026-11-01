@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "id": "vn-unknown-speed-limit",
+  "name": "VN Unknown Speed Limit — Unmapped Rural Road (Synthetic)",
+  "description": "SYNTHETIC TEST DATA (not real Vietnamese map data): Secondary road where speed-limit data is unverified/unavailable (null); display must show '--' and never guess.",
+  "region": "VN-Synthetic",
+  "isSynthetic": true,
+  "initialState": {
+    "currentSpeedKmh": 68,
+    "gpsStatus": "ACTIVE",
+    "bleStatus": "CONNECTED",
+    "routeStatus": "ACTIVE",
+    "timestampAgeMs": 0,
+    "progressPercent": 25,
+    "fallbackPosition": { "latitude": 21.04, "longitude": 105.86 }
+  },
+  "routePoints": [
+    { "latitude": 21.038, "longitude": 105.858 },
+    { "latitude": 21.041, "longitude": 105.861 },
+    { "latitude": 21.044, "longitude": 105.861 }
+  ],
+  "steps": [
+    {
+      "atProgressPercent": 0,
+      "turnDirection": "LEFT",
+      "distanceToTurnMeters": 450,
+      "headingDegrees": 45,
+      "instruction": "Follow rural road — speed limit unverified (synthetic)",
+      "speedLimitKmh": null,
+      "speedLimitStatus": "UNKNOWN"
+    }
+  ]
+}

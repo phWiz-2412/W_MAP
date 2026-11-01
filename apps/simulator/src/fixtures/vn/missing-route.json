@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "id": "vn-missing-route",
+  "name": "VN Missing Route — Guidance Only (Synthetic)",
+  "description": "SYNTHETIC TEST DATA (not real Vietnamese map data): Active turn guidance with empty route geometry (e.g., route polyline not yet transmitted).",
+  "region": "VN-Synthetic",
+  "isSynthetic": true,
+  "initialState": {
+    "currentSpeedKmh": 38,
+    "gpsStatus": "ACTIVE",
+    "bleStatus": "CONNECTED",
+    "routeStatus": "ACTIVE",
+    "timestampAgeMs": 0,
+    "progressPercent": 0,
+    "fallbackPosition": { "latitude": 16.0544, "longitude": 108.2022 }
+  },
+  "routePoints": [],
+  "steps": [
+    {
+      "atProgressPercent": 0,
+      "turnDirection": "LEFT",
+      "distanceToTurnMeters": 280,
+      "headingDegrees": 0,
+      "instruction": "Turn left ahead — route geometry unavailable (synthetic)",
+      "speedLimitKmh": 50,
+      "speedLimitStatus": "VALID"
+    }
+  ]
+}

@@ -8,12 +8,13 @@ import {
 } from "@w-map/navigation-core";
 import type { BackdropRoad } from "../fixtures/demoRoute";
 import { SpeedLimitSign } from "./SpeedLimitSign";
-import { STATE_STYLES } from "./stateStyle";
+import { STATE_STYLES, bannerText } from "./stateStyle";
 import { TurnArrow, formatDistance } from "./TurnArrow";
 
 interface Props {
   data: NavigationData;
   speedState: SpeedState;
+  linkLabel?: string;
   /** Context roads (lat/lon) from a map provider. Simulated fixtures for now. */
   backdropRoads?: readonly BackdropRoad[];
   metersPerPixel?: number;
@@ -25,7 +26,7 @@ const ANCHOR: ScreenPoint = [120, 140];
 const toPath = (pts: readonly ScreenPoint[]) => pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
 
 /** MAP mode body: heading-up map centered on the current position. */
-export function MapDisplay({ data, speedState, backdropRoads = [], metersPerPixel = 2 }: Props) {
+export function MapDisplay({ data, speedState, linkLabel = "SIM BLE", backdropRoads = [], metersPerPixel = 2 }: Props) {
   const style = STATE_STYLES[speedState];
   const linkDown = speedState === "DISCONNECTED";
   const navActive = data.routeStatus === "ACTIVE";
@@ -117,7 +118,7 @@ export function MapDisplay({ data, speedState, backdropRoads = [], metersPerPixe
         <SpeedLimitSign cx={212} cy={58} r={18} limitKmh={data.speedLimitKmh} status={data.speedLimitStatus} inactive={style.notCurrent} />
         <rect x={4} y={30} width={128} height={16} rx={4} fill="#0b0d10" opacity={0.85} />
         <text x={9} y={41.5} fontSize={9} fontWeight={700} fill={style.color} data-testid="state-banner" data-state={speedState}>
-          {style.banner}
+          {bannerText(speedState, linkLabel)}
         </text>
         <text x={9} y={58} fontSize={8} fontWeight={700} fill="#f5a524" data-testid="map-disclaimer">
           SIMULATED MAP - NOT REAL DATA

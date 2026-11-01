@@ -3,6 +3,8 @@ import type { BLEStatus, GPSStatus } from "@w-map/navigation-core";
 interface Props {
   gps: GPSStatus | null;
   ble: BLEStatus | null;
+  /** Name of the link to the phone, e.g. "SIM BLE" or "PHONE LINK". */
+  linkLabel?: string;
 }
 
 function Chip({ x, w, label, ok, testId, state }: { x: number; w: number; label: string; ok: boolean; testId: string; state: string }) {
@@ -19,7 +21,7 @@ function Chip({ x, w, label, ok, testId, state }: { x: number; w: number; label:
 }
 
 /** Top status bar: GPS and (simulated) BLE link state. */
-export function StatusIndicator({ gps, ble }: Props) {
+export function StatusIndicator({ gps, ble, linkLabel = "SIM BLE" }: Props) {
   const gpsOk = gps === "ACTIVE";
   const bleOk = ble === "CONNECTED";
   return (
@@ -28,7 +30,7 @@ export function StatusIndicator({ gps, ble }: Props) {
       <Chip
         x={86}
         w={148}
-        label={bleOk ? "SIM BLE LINKED" : "SIM BLE DISCONNECTED"}
+        label={bleOk ? `${linkLabel} LINKED` : `${linkLabel} DISCONNECTED`}
         ok={bleOk}
         testId="ble-status"
         state={ble ?? "NONE"}

@@ -22,6 +22,8 @@ interface Props {
   mode: NavigationMode;
   warningConfig?: WarningConfig;
   clock?: Clock;
+  /** Name of the phone link shown in status/banners ("SIM BLE" in simulation). */
+  linkLabel?: string;
   backdropRoads?: readonly BackdropRoad[];
   /** How often packet age is re-checked. */
   recheckMs?: number;
@@ -75,6 +77,7 @@ export function NavigationDisplay({
   mode,
   warningConfig = DEFAULT_WARNING_CONFIG,
   clock = systemClock,
+  linkLabel = "SIM BLE",
   backdropRoads,
   recheckMs = 500,
 }: Props) {
@@ -96,11 +99,11 @@ export function NavigationDisplay({
       <rect x={1.5} y={1.5} width={237} height={237} rx={13} fill="none" stroke={border} strokeWidth={speedState === "WARNING" ? 3 : 1.5} data-testid="display-border" />
       {data ? (
         <>
-          <StatusIndicator gps={data.gpsStatus} ble={data.bleStatus} />
+          <StatusIndicator gps={data.gpsStatus} ble={data.bleStatus} linkLabel={linkLabel} />
           {mode === "TURN" ? (
-            <TurnDisplay data={data} speedState={speedState} />
+            <TurnDisplay data={data} speedState={speedState} linkLabel={linkLabel} />
           ) : (
-            <MapDisplay data={data} speedState={speedState} backdropRoads={backdropRoads} />
+            <MapDisplay data={data} speedState={speedState} linkLabel={linkLabel} backdropRoads={backdropRoads} />
           )}
         </>
       ) : (

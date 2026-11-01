@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>W_MAP Phone GPS</title>
+    <style>
+      body { margin: 0; padding: 20px; background: #0e1116; color: #e8ecf2; font-family: system-ui, sans-serif; text-align: center; }
+      #speed { font-size: 96px; font-weight: 800; margin: 16px 0 0; }
+      .unit { color: #a3acba; }
+      button { font: inherit; font-size: 1.1rem; padding: 14px 24px; margin: 8px; border-radius: 10px; border: 1px solid #3a4452; background: #161a21; color: #e8ecf2; }
+      #error { color: #ff9a9a; min-height: 3em; }
+      .note { color: #f5a524; font-size: 0.85rem; }
+      p { margin: 6px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>W_MAP phone GPS</h1>
+    <div id="speed">--</div>
+    <div class="unit">km/h (real GPS speed)</div>
+    <p id="info">waiting for GPS...</p>
+    <p id="link">Link to display: not started</p>
+    <p id="error" role="alert"></p>
+    <button id="start" type="button">Start sending GPS</button>
+    <button id="stop" type="button" disabled>Stop</button>
+    <p class="note">Keep this page open and the screen on. Safari may pause GPS when the page is in the background. Do not operate the phone while riding.</p>
+    <script type="module" src="/src/phone/main.ts"></script>
+  </body>
+</html>

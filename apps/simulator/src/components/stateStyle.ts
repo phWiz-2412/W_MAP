@@ -19,3 +19,8 @@ export const STATE_STYLES: Record<SpeedState, StateStyle> = {
   DISCONNECTED: { banner: "SIM BLE DISCONNECTED", color: "#ff5a5f", speedColor: "#8b93a1", notCurrent: true },
   NO_SPEED: { banner: "NO SPEED DATA", color: "#f5a524", speedColor: "#8b93a1", notCurrent: true },
 };
+
+/** Banner text; the disconnected message names the actual link (simulated BLE, phone link...). */
+export function bannerText(state: SpeedState, linkLabel: string): string {
+  return state === "DISCONNECTED" ? `${linkLabel} DISCONNECTED` : STATE_STYLES[state].banner;
+}

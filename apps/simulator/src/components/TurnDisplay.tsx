@@ -1,15 +1,16 @@
 import type { NavigationData, SpeedState } from "@w-map/navigation-core";
 import { SpeedLimitSign } from "./SpeedLimitSign";
-import { STATE_STYLES } from "./stateStyle";
+import { STATE_STYLES, bannerText } from "./stateStyle";
 import { TurnArrow, formatDistance } from "./TurnArrow";
 
 interface Props {
   data: NavigationData;
   speedState: SpeedState;
+  linkLabel?: string;
 }
 
 /** TURN mode body (y = 26..226 of the 240x240 display). */
-export function TurnDisplay({ data, speedState }: Props) {
+export function TurnDisplay({ data, speedState, linkLabel = "SIM BLE" }: Props) {
   const style = STATE_STYLES[speedState];
   const linkDown = speedState === "DISCONNECTED";
   const speedText = linkDown || data.currentSpeedKmh === null ? "--" : String(Math.round(data.currentSpeedKmh));
@@ -28,7 +29,7 @@ export function TurnDisplay({ data, speedState }: Props) {
 
       <rect x={8} y={130} width={224} height={22} rx={6} fill="#161a21" stroke={style.color} strokeWidth={1.5} />
       <text x={120} y={146} textAnchor="middle" fontSize={12} fontWeight={800} fill={style.color} data-testid="state-banner" data-state={speedState}>
-        {style.banner}
+        {bannerText(speedState, linkLabel)}
       </text>
 
       <g transform="translate(52 193)" opacity={guidanceDimmed ? 0.3 : 1}>

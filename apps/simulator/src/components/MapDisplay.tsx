@@ -38,11 +38,58 @@ const EMPTY_ROADS: readonly BackdropRoad[] = [];
 const toPath = (pts: readonly ScreenPoint[]) =>
   pts.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
 
-function formatCardinalHeading(deg: number): string {
+export function formatCardinalHeading(deg: number): string {
   const normalized = ((deg % 360) + 360) % 360;
   const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] as const;
   const idx = Math.round(normalized / 45) % 8;
   return `${String(Math.round(normalized)).padStart(3, "0")}° ${dirs[idx]}`;
+}
+
+interface CompassTapeTick {
+  deg: number;
+  x: number;
+  label: string | null;
+  isMajor: boolean;
+  isNorth: boolean;
+}
+
+const CARDINAL_LABELS: Record<number, string> = {
+  0: "N",
+  45: "NE",
+  90: "E",
+  135: "SE",
+  180: "S",
+  225: "SW",
+  270: "W",
+  315: "NW",
+};
+
+/**
+ * Computes sliding horizontal compass tape ticks centered at `centerX = 130`
+ * covering `heading ± 75°` at `0.75 px/deg`.
+ */
+function buildCompassTapeTicks(headingDegrees: number): CompassTapeTick[] {
+  const normalized = ((headingDegrees % 360) + 360) % 360;
+  const centerX = 130;
+  const pxPerDeg = 0.72;
+  const ticks: CompassTapeTick[] = [];
+
+  for (let offset = -75; offset <= 75; offset += 1) {
+    const rawDeg = Math.round(normalized + offset);
+    if (rawDeg % 15 !== 0) continue;
+    const deg = ((rawDeg % 360) + 360) % 360;
+    const delta = rawDeg - normalized;
+    const x = centerX + delta * pxPerDeg;
+    const label = CARDINAL_LABELS[deg] ?? null;
+    ticks.push({
+      deg,
+      x,
+      label,
+      isMajor: deg % 45 === 0,
+      isNorth: deg === 0,
+    });
+  }
+  return ticks;
 }
 
 function lonToTileX(lon: number, z: number): number {
@@ -164,11 +211,16 @@ export function MapDisplay({
   const navActive = data.routeStatus === "ACTIVE";
   const routeUsable = isRouteUsable(data.routePoints);
   const speedText = linkDown || data.currentSpeedKmh === null ? "--" : String(Math.round(data.currentSpeedKmh));
-  const heading = data.headingDegrees ?? 0;
+  const hasHeading = !linkDown && data.headingDegrees !== null && Number.isFinite(data.headingDegrees);
+  const heading = hasHeading ? ((data.headingDegrees! % 360) + 360) % 360 : 0;
   const lat = data.latitude;
   const lon = data.longitude;
   const hasPosition = lat !== null && lon !== null;
   const dim = linkDown || style.notCurrent;
+  const compassTicks = useMemo(
+    () => (hasHeading ? buildCompassTapeTicks(heading) : []),
+    [hasHeading, heading],
+  );
 
   const projected = useMemo(() => {
     if (lat === null || lon === null) return null;
@@ -218,6 +270,9 @@ export function MapDisplay({
       <defs>
         <clipPath id="wmap-viewport-clip">
           <rect x={4} y={24} width={232} height={150} rx={10} />
+        </clipPath>
+        <clipPath id="wmap-compass-tape-clip">
+          <rect x={78} y={42} width={104} height={13} rx={3} />
         </clipPath>
         <linearGradient id="wmap-sky-horizon" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#070b10" stopOpacity={0.85} />
@@ -394,10 +449,10 @@ export function MapDisplay({
           <g
             transform={`translate(${ANCHOR[0]} ${ANCHOR[1]})`}
             data-testid="position-marker"
-            data-heading={heading}
+            data-heading={hasHeading ? heading : "none"}
             data-gps={data.gpsStatus}
           >
-            {data.gpsStatus === "ACTIVE" && (
+            {data.gpsStatus === "ACTIVE" && hasHeading && (
               <polygon points="0,0 -24,-52 24,-52" fill="url(#wmap-heading-cone)" />
             )}
             <circle r={11.5} fill={data.gpsStatus === "ACTIVE" ? "#0284c7" : "#f5a524"} opacity={0.28} />
@@ -458,7 +513,7 @@ export function MapDisplay({
         {/* Top horizon vignette */}
         <rect x={4} y={24} width={232} height={28} fill="url(#wmap-sky-horizon)" />
 
-        {/* Top HUD Strip: State Banner (left), Heading Tape (center), Route Status + Compass (right) */}
+        {/* Top HUD Strip: State Banner (left), Heading Readout (center), Route Status + Compass (right) */}
         <rect x={8} y={27} width={96} height={15} rx={4} fill="#0b0f17" stroke="#1e293b" strokeWidth={0.8} opacity={0.92} />
         <text
           x={13}
@@ -472,11 +527,75 @@ export function MapDisplay({
           {bannerText(speedState, linkLabel)}
         </text>
 
-        {/* Center Cardinal Heading Pill */}
-        <rect x={108} y={27} width={44} height={15} rx={4} fill="#0b0f17" stroke="#1e293b" strokeWidth={0.8} opacity={0.92} />
-        <text x={130} y={37.5} textAnchor="middle" fontSize={7.8} fontWeight={800} fill="#e2e8f0">
-          {hasPosition ? formatCardinalHeading(heading) : "---°"}
+        {/* Center Cardinal Heading Pill (never fakes 000° N when headingDegrees is null) */}
+        <rect
+          x={108}
+          y={27}
+          width={44}
+          height={15}
+          rx={4}
+          fill="#0b0f17"
+          stroke={hasHeading ? "#38bdf8" : "#1e293b"}
+          strokeWidth={0.8}
+          opacity={0.92}
+        />
+        <text
+          x={130}
+          y={37.5}
+          textAnchor="middle"
+          fontSize={7.8}
+          fontWeight={800}
+          fill={hasHeading ? "#e2e8f0" : "#64748b"}
+          data-testid="compass-heading"
+          data-compass={hasHeading ? "ACTIVE" : "UNAVAILABLE"}
+        >
+          {hasHeading ? formatCardinalHeading(heading) : "---° --"}
         </text>
+
+        {/* Sliding Horizontal Compass Tape (graduated every 15° with N/NE/E/SE/S/SW/W/NW markers) */}
+        {hasHeading && (
+          <g data-testid="compass-tape">
+            <rect
+              x={78}
+              y={43}
+              width={104}
+              height={12}
+              rx={3}
+              fill="#0b0f17"
+              stroke="#1e293b"
+              strokeWidth={0.7}
+              opacity={0.88}
+            />
+            <g clipPath="url(#wmap-compass-tape-clip)">
+              {compassTicks.map((t) => (
+                <g key={`ct-${t.deg}`}>
+                  <line
+                    x1={t.x}
+                    y1={43}
+                    x2={t.x}
+                    y2={t.isMajor ? 47.2 : 45.6}
+                    stroke={t.isNorth ? "#ff5a5f" : t.isMajor ? "#94a3b8" : "#475569"}
+                    strokeWidth={t.isMajor ? 1 : 0.7}
+                  />
+                  {t.label && (
+                    <text
+                      x={t.x}
+                      y={53.2}
+                      textAnchor="middle"
+                      fontSize={5.8}
+                      fontWeight={800}
+                      fill={t.isNorth ? "#ff5a5f" : "#cbd5e1"}
+                    >
+                      {t.label}
+                    </text>
+                  )}
+                </g>
+              ))}
+            </g>
+            {/* Center Lubber Triangle pointing at active heading */}
+            <polygon points="130,44.8 127.8,42.2 132.2,42.2" fill="#38bdf8" />
+          </g>
+        )}
 
         {/* Route Status Pill */}
         <rect x={156} y={27} width={46} height={15} rx={4} fill="#0b0f17" stroke="#1e293b" strokeWidth={0.8} opacity={0.92} />
@@ -492,12 +611,32 @@ export function MapDisplay({
           {navActive ? "NAV ACTIVE" : "NAV OFF"}
         </text>
 
-        {/* Rotating North Compass Rose */}
-        <g transform="translate(219 39)" data-testid="north-indicator">
-          <circle r={11} fill="#0b0f17" stroke="#283548" strokeWidth={1} opacity={0.94} />
-          <g transform={`rotate(${-heading})`}>
-            <polygon points="0,-7.5 3.2,2 -3.2,2" fill="#ff5a5f" />
-            <polygon points="0,7.5 3.2,-2 -3.2,-2" fill="#475569" />
+        {/* Graduated 360° Rotating North Compass Rose */}
+        <g
+          transform="translate(219 39)"
+          data-testid="north-indicator"
+          data-compass={hasHeading ? "ACTIVE" : "UNAVAILABLE"}
+        >
+          <circle
+            r={11.5}
+            fill="#0b0f17"
+            stroke={hasHeading ? "#38bdf8" : "#283548"}
+            strokeWidth={0.9}
+            opacity={0.94}
+          />
+          {/* Degree dial ticks around the compass bezel */}
+          <circle
+            r={9.5}
+            fill="none"
+            stroke="#475569"
+            strokeWidth={1.2}
+            strokeDasharray="0.9 2.2"
+            opacity={hasHeading ? 0.85 : 0.35}
+          />
+          <g transform={`rotate(${-heading})`} opacity={hasHeading ? 1 : 0.32}>
+            <polygon points="0,-8.2 2.8,1.5 -2.8,1.5" fill="#ff5a5f" />
+            <polygon points="0,8.2 2.8,-1.5 -2.8,-1.5" fill="#64748b" />
+            <circle r={1.5} fill="#e2e8f0" />
           </g>
         </g>
 

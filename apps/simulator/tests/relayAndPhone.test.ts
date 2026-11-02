@@ -4,6 +4,8 @@ import {
   coordsToGpsMessage,
   deriveSpeedAndHeadingFromSamples,
   describeGeoError,
+  extractCompassHeadingFromEvent,
+  smoothCompassHeading,
   type CoordsLike,
 } from "../src/phone/gpsReporter";
 import {
@@ -11,6 +13,7 @@ import {
   type GeolocationLike,
   type PhoneSocketLike,
 } from "../src/phone/phoneClient";
+import { LivePhoneProvider, type SocketLike } from "../src/services/LivePhoneProvider";
 
 const sock = () => {
   const sent: string[] = [];
@@ -530,5 +533,137 @@ describe("describeGeoError", () => {
     expect(describeGeoError(2)).toMatch(/unavailable/i);
     expect(describeGeoError(3)).toMatch(/timed out/i);
     expect(describeGeoError(99)).toMatch(/unknown/i);
+  });
+});
+
+describe("Real Hardware Compass (webkitCompassHeading & deviceorientationabsolute)", () => {
+  it("extracts iOS Safari webkitCompassHeading, rejects uncalibrated negative accuracy, and rejects non-absolute alpha", () => {
+    // Valid iOS Safari hardware compass
+    expect(
+      extractCompassHeadingFromEvent({
+        webkitCompassHeading: 142.4,
+        webkitCompassAccuracy: 12,
+      }),
+    ).toEqual({
+      headingDegrees: 142.4,
+      accuracyDegrees: 12,
+      source: "webkit_compass",
+    });
+
+    // Uncalibrated iOS compass (webkitCompassAccuracy < 0) is rejected
+    expect(
+      extractCompassHeadingFromEvent({
+        webkitCompassHeading: 90,
+        webkitCompassAccuracy: -1,
+      }),
+    ).toBeNull();
+
+    // W3C absolute orientation converts counterclockwise alpha to clockwise compass bearing
+    expect(
+      extractCompassHeadingFromEvent({
+        alpha: 90,
+        absolute: true,
+      }),
+    ).toEqual({
+      headingDegrees: 270,
+      accuracyDegrees: null,
+      source: "absolute_alpha",
+    });
+
+    // Non-absolute alpha is arbitrary device frame and must never be used as a fake compass
+    expect(
+      extractCompassHeadingFromEvent({
+        alpha: 90,
+        absolute: false,
+      }),
+    ).toBeNull();
+  });
+
+  it("smooths compass headings across the 359° <-> 0° North wrap-around without jumping through 180°", () => {
+    const smoothed = smoothCompassHeading(358, 2, 0.5);
+    expect(smoothed).toBeCloseTo(0, 5);
+    const smoothed2 = smoothCompassHeading(2, 358, 0.5);
+    expect(smoothed2).toBeCloseTo(0, 5);
+  });
+
+  it("streams real-time compass frames from PhoneGpsClient to LivePhoneProvider even when stationary (0 km/h)", () => {
+    let now = 1000;
+    const phoneSockets: FakePhoneSocket[] = [];
+    const geo = new FakeGeo();
+    const client = new PhoneGpsClient({
+      url: "wss://192.168.1.10:5173/ws?role=phone",
+      geolocation: geo,
+      clock: () => now,
+      reconnectBaseMs: 0,
+      socketFactory: () => {
+        const s = new FakePhoneSocket();
+        phoneSockets.push(s);
+        return s;
+      },
+    });
+
+    let displaySocket: SocketLike | null = null;
+    const provider = new LivePhoneProvider({
+      url: "wss://192.168.1.10:5173/ws?role=display",
+      clock: { nowMs: () => now },
+      heartbeatMs: 0,
+      pingIntervalMs: 0,
+      reconnectMs: 0,
+      socketFactory: () => {
+        const s: SocketLike = {
+          onopen: null,
+          onclose: null,
+          onmessage: null,
+          onerror: null,
+          close: () => undefined,
+        };
+        displaySocket = s;
+        return s;
+      },
+    });
+
+    const receivedPackets: { headingDegrees: number | null; currentSpeedKmh: number | null }[] = [];
+    provider.subscribe((raw) => {
+      const parsed = JSON.parse(raw);
+      receivedPackets.push({
+        headingDegrees: parsed.data.headingDegrees,
+        currentSpeedKmh: parsed.data.currentSpeedKmh,
+      });
+    });
+
+    client.start();
+    phoneSockets[0]!.open();
+    phoneSockets[0]!.receive({ type: "presence", phones: 1, displays: 1 });
+    displaySocket!.onopen?.();
+    displaySocket!.onmessage?.({ data: JSON.stringify({ type: "presence", phones: 1 }) });
+
+    // Stationary GPS fix on iPhone Safari: speed = 0, coords.heading = null
+    now = 1200;
+    geo.emitFix(
+      { latitude: 16.0678, longitude: 108.2208, speed: 0, heading: null, accuracy: 6 },
+      1200,
+    );
+    const fixPayload = phoneSockets[0]!.sent.at(-1)!;
+    displaySocket!.onmessage?.({ data: fixPayload });
+    // Before compass event, headingDegrees is honestly null (never faked as 0)
+    expect(receivedPackets.at(-1)?.headingDegrees).toBeNull();
+
+    // User rotates iPhone while standing still -> real hardware magnetometer fires
+    now = 1400;
+    client.handleDeviceOrientation({
+      webkitCompassHeading: 215,
+      webkitCompassAccuracy: 8,
+    });
+    const compassPayload = phoneSockets[0]!.sent.at(-1)!;
+    expect(JSON.parse(compassPayload)).toMatchObject({
+      type: "compass",
+      headingDegrees: 215,
+      compassSource: "webkit_compass",
+    });
+
+    // Relay forwards compass frame to LivePhoneProvider -> HUD rotates immediately at 0 km/h!
+    displaySocket!.onmessage?.({ data: compassPayload });
+    expect(receivedPackets.at(-1)?.headingDegrees).toBe(215);
+    expect(receivedPackets.at(-1)?.currentSpeedKmh).toBe(0);
   });
 });

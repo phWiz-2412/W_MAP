@@ -20,10 +20,12 @@ import { PhoneGpsClient } from "./phoneClient";
  */
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
 const startBtn = $<HTMLButtonElement>("start");
+const compassBtn = $<HTMLButtonElement>("compass-btn");
 const stopBtn = $<HTMLButtonElement>("stop");
 const modeTurnBtn = $<HTMLButtonElement>("mode-turn");
 const modeMapBtn = $<HTMLButtonElement>("mode-map");
 const speedEl = $("speed");
+const compassEl = $("compass-readout");
 const statusEl = $("status");
 const infoEl = $("info");
 const linkEl = $("link");
@@ -67,6 +69,7 @@ function getActiveProviders() {
 const client = new PhoneGpsClient({
   onChange: (snap) => {
     if (speedEl) speedEl.textContent = snap.speedKmhText;
+    if (compassEl) compassEl.textContent = snap.compassText;
     if (statusEl) statusEl.textContent = `State: ${snap.statusLabel}`;
     if (infoEl) infoEl.textContent = snap.infoLabel;
     if (linkEl) linkEl.textContent = snap.linkLabel;
@@ -119,8 +122,13 @@ const initial = client.getSnapshot();
 if (endpointEl) endpointEl.textContent = `Relay endpoint: ${initial.relayEndpoint}`;
 
 startBtn?.addEventListener("click", () => {
+  void client.requestCompassPermission();
   client.start();
   navigator.wakeLock?.request("screen").then((l) => (wakeLock = l)).catch(() => undefined);
+});
+
+compassBtn?.addEventListener("click", () => {
+  void client.requestCompassPermission();
 });
 
 stopBtn?.addEventListener("click", () => {

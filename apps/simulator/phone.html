@@ -76,6 +76,7 @@
     <section class="card hero">
       <div id="speed">--</div>
       <div class="unit">km/h (real GPS speed)</div>
+      <p id="compass-readout" style="font-weight: 700; color: #34d399; margin-top: 6px;">Compass: waiting for sensor / tap Enable Compass</p>
       <p id="status">State: Stopped</p>
       <p id="info">waiting for GPS...</p>
       <p id="link">Link status: not started</p>
@@ -83,7 +84,8 @@
       <p id="error" role="alert"></p>
 
       <div class="btn-row">
-        <button id="start" class="primary" type="button">Start sending GPS</button>
+        <button id="start" class="primary" type="button">Start sending GPS &amp; Compass</button>
+        <button id="compass-btn" type="button">Enable / Calibrate Compass</button>
         <button id="stop" type="button" disabled>Stop</button>
       </div>
 

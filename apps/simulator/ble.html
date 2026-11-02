@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>W_MAP BLE Link Tester (PC → ESP32-S3)</title>
+    <style>
+      body { margin: 0; padding: 16px; background: #0e1116; color: #e8ecf2; font-family: system-ui, sans-serif; max-width: 640px; margin-inline: auto; }
+      h1 { font-size: 1.3rem; }
+      .card { background: #161b22; border: 1px solid #2b3442; border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+      button { font: inherit; padding: 10px 16px; border-radius: 10px; border: 1px solid #3a4452; background: #1f2937; color: #fff; cursor: pointer; font-weight: 600; margin: 4px 4px 4px 0; }
+      button.primary { background: #0284c7; border-color: #38bdf8; }
+      button:disabled { opacity: 0.45; cursor: not-allowed; }
+      #state { font-weight: 800; font-size: 1.2rem; }
+      .ready { color: #34d399; } .failed { color: #ff9a9a; } .wait { color: #f5a524; }
+      table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+      td { padding: 4px 0; border-bottom: 1px solid #222b38; } td:last-child { text-align: right; font-family: monospace; }
+      .warn { color: #f5a524; font-size: 0.85rem; }
+    </style>
+  </head>
+  <body>
+    <h1>W_MAP BLE Link Tester</h1>
+    <p class="warn">TEST TOOL: a PC acts as the "phone" and sends SYNTHETIC telemetry to a real ESP32-S3 over Bluetooth (no WiFi, no relay). Use Chrome or Edge. iPhone Safari does not support Web Bluetooth; on iPhone use the native app in <code>ios/WMap</code>.</p>
+
+    <section class="card">
+      <div id="state" class="wait">idle</div>
+      <p id="error" style="color:#ff9a9a;min-height:1.3em"></p>
+      <button id="connect" class="primary" type="button">1. Connect to W_MAP display</button>
+      <button id="start" type="button" disabled>2. Send test telemetry (5 Hz)</button>
+      <button id="stop" type="button" disabled>Stop &amp; disconnect</button>
+    </section>
+
+    <section class="card">
+      <table>
+        <tr><td>Device</td><td id="dev">--</td></tr>
+        <tr><td>Frames written</td><td id="sent">0</td></tr>
+        <tr><td>Frames coalesced (dropped as stale)</td><td id="dropped">0</td></tr>
+        <tr><td>Last sent sequence</td><td id="seq">--</td></tr>
+        <tr><td>ESP32 acknowledged sequence</td><td id="ack">-- (no ack yet)</td></tr>
+        <tr><td>Unacknowledged frames</td><td id="unacked">--</td></tr>
+      </table>
+      <p class="warn">"Acknowledged" comes from the ESP32's own status notifications, so it proves the display really received and CRC-validated frames.</p>
+    </section>
+    <script type="module" src="/src/ble/main.ts"></script>
+  </body>
+</html>

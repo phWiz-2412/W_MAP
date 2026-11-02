@@ -22,7 +22,7 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     rollupOptions: {
-      input: { main: resolve(import.meta.dirname, "index.html"), phone: resolve(import.meta.dirname, "phone.html") },
+      input: { main: resolve(import.meta.dirname, "index.html"), phone: resolve(import.meta.dirname, "phone.html"), ble: resolve(import.meta.dirname, "ble.html") },
     },
   },
   test: {

@@ -1,4 +1,5 @@
 import type { NavigationData, SpeedState } from "@w-map/navigation-core";
+import { formatCardinalHeading } from "./MapDisplay";
 import { SpeedLimitSign } from "./SpeedLimitSign";
 import { STATE_STYLES, bannerText } from "./stateStyle";
 import { TURN_LABELS, TurnArrow, formatDistance } from "./TurnArrow";
@@ -14,6 +15,7 @@ export function TurnDisplay({ data, speedState, linkLabel = "SIM BLE" }: Props) 
   const style = STATE_STYLES[speedState];
   const linkDown = speedState === "DISCONNECTED";
   const speedText = linkDown || data.currentSpeedKmh === null ? "--" : String(Math.round(data.currentSpeedKmh));
+  const hasHeading = !linkDown && data.headingDegrees !== null && Number.isFinite(data.headingDegrees);
   const navActive = data.routeStatus === "ACTIVE";
   const guidanceDimmed = linkDown || !navActive || style.notCurrent;
   return (
@@ -37,12 +39,36 @@ export function TurnDisplay({ data, speedState, linkLabel = "SIM BLE" }: Props) 
 
       <SpeedLimitSign
         cx={194}
-        cy={66}
-        r={26}
+        cy={62}
+        r={24}
         limitKmh={data.speedLimitKmh}
         status={data.speedLimitStatus}
         inactive={style.notCurrent}
       />
+
+      {/* Real Compass Heading Badge in TURN Mode */}
+      <rect
+        x={160}
+        y={96}
+        width={68}
+        height={18}
+        rx={5}
+        fill="#11161f"
+        stroke={hasHeading ? "#38bdf8" : "#222b38"}
+        strokeWidth={1}
+      />
+      <text
+        x={194}
+        y={108}
+        textAnchor="middle"
+        fontSize={9}
+        fontWeight={800}
+        fill={hasHeading ? "#e2e8f0" : "#64748b"}
+        data-testid="turn-compass"
+        data-compass={hasHeading ? "ACTIVE" : "UNAVAILABLE"}
+      >
+        {hasHeading ? formatCardinalHeading(data.headingDegrees!) : "---° --"}
+      </text>
 
       {/* Status Banner Pill */}
       <rect x={6} y={126} width={228} height={22} rx={6} fill="#141922" stroke={style.color} strokeWidth={1.4} />

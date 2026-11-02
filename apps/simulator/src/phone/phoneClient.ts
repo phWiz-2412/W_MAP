@@ -14,7 +14,12 @@ import {
   LIVE_WATCH_OPTIONS,
   coordsToGpsMessage,
   describeGeoError,
+  extractCompassHeadingFromEvent,
+  shortestAngleDeltaDegrees,
+  smoothCompassHeading,
+  type CompassSource,
   type CoordsLike,
+  type DeviceOrientationLike,
   type PositionSampleLike,
 } from "./gpsReporter";
 import {
@@ -72,6 +77,11 @@ export interface PhoneClientSnapshot {
   distanceToTurnMeters: number | null;
   remainingDistanceMeters: number | null;
   routeStatus: RouteStatus;
+  /** Hardware magnetometer/gyroscope heading in [0, 360) degrees clockwise from North, or null when unavailable. */
+  compassHeadingDegrees: number | null;
+  compassAccuracyDegrees: number | null;
+  compassSource: CompassSource;
+  compassText: string;
 }
 
 export interface PhoneClientOptions {
@@ -126,6 +136,14 @@ export class PhoneGpsClient {
   private destinationName: string | null = null;
   private trackerState: RouteTrackerState = INITIAL_ROUTE_TRACKER;
   private latestEval: RouteProgressEvaluation | null = null;
+
+  // Real hardware compass sensor state (iOS Safari webkitCompassHeading / W3C deviceorientationabsolute)
+  private compassHeadingDegrees: number | null = null;
+  private compassAccuracyDegrees: number | null = null;
+  private compassSource: CompassSource = "none";
+  private lastCompassSentAtMs = 0;
+  private lastSentCompassDeg: number | null = null;
+  private orientationListener: ((ev: Event) => void) | null = null;
 
   private readonly url: string;
   private readonly sanitizedEndpoint: string;
@@ -185,6 +203,7 @@ export class PhoneGpsClient {
     this.reconnectAttempts = 0;
 
     this.connectSocket();
+    this.attachCompassListeners();
 
     // Once watchPosition is registered without immediate synchronous denial, transition to waiting_for_fix
     let synchronousError = false;
@@ -205,6 +224,7 @@ export class PhoneGpsClient {
   stop(): void {
     this.running = false;
     this.clearWatcher();
+    this.detachCompassListeners();
     this.clearReconnectTimer();
     this.detachAndCloseSocket();
     this.wsState = "idle";
@@ -215,6 +235,121 @@ export class PhoneGpsClient {
     this.speedKmhText = "--";
     this.lastFixSummary = "";
     this.notify();
+  }
+
+  /**
+   * Requests iOS 13+ Safari `DeviceOrientationEvent.requestPermission()` when triggered from a user tap gesture,
+   * and attaches real hardware magnetometer/gyroscope listeners (`deviceorientation` / `deviceorientationabsolute`).
+   */
+  async requestCompassPermission(): Promise<boolean> {
+    if (typeof window !== "undefined" && "DeviceOrientationEvent" in window) {
+      const doe = window.DeviceOrientationEvent as unknown as {
+        requestPermission?: () => Promise<"granted" | "denied" | string>;
+      };
+      if (typeof doe.requestPermission === "function") {
+        try {
+          const state = await doe.requestPermission();
+          if (state !== "granted") {
+            this.errorMessage = "Compass permission denied in Safari — allow Motion & Orientation access.";
+            this.notify();
+            return false;
+          }
+        } catch (err) {
+          this.errorMessage =
+            err instanceof Error ? err.message : "Failed to request Safari compass permission.";
+          this.notify();
+          return false;
+        }
+      }
+    }
+    this.attachCompassListeners();
+    return true;
+  }
+
+  /**
+   * Processes a real hardware `DeviceOrientationEvent` from iPhone Safari (`webkitCompassHeading`)
+   * or W3C `deviceorientationabsolute`. Applies circular low-pass smoothing and streams real-time
+   * `{ type: "compass" }` updates over the relay when the phone rotates (even at 0 km/h).
+   */
+  handleDeviceOrientation(ev: DeviceOrientationLike): void {
+    const reading = extractCompassHeadingFromEvent(ev);
+    if (!reading) return;
+
+    this.compassHeadingDegrees = smoothCompassHeading(
+      this.compassHeadingDegrees,
+      reading.headingDegrees,
+      0.35,
+    );
+    this.compassAccuracyDegrees = reading.accuracyDegrees;
+    this.compassSource = reading.source;
+
+    const now = this.clock();
+    const roundedHeading = Number(this.compassHeadingDegrees.toFixed(1));
+    const delta =
+      this.lastSentCompassDeg === null
+        ? 360
+        : Math.abs(shortestAngleDeltaDegrees(this.lastSentCompassDeg, roundedHeading));
+
+    if (
+      this.running &&
+      this.ws &&
+      this.ws.readyState === WS_OPEN &&
+      this.wsState === "connected" &&
+      delta >= 1.0 &&
+      now - this.lastCompassSentAtMs >= 100
+    ) {
+      this.lastCompassSentAtMs = now;
+      this.lastSentCompassDeg = roundedHeading;
+      try {
+        this.ws.send(
+          JSON.stringify({
+            type: "compass",
+            headingDegrees: roundedHeading,
+            compassSource: this.compassSource,
+            compassAccuracyDegrees: this.compassAccuracyDegrees,
+            phoneSessionId: this.sessionId,
+            phoneSentAtMs: now,
+          }),
+        );
+      } catch {
+        // Ignore transient compass send error
+      }
+    }
+    this.notify();
+  }
+
+  private attachCompassListeners(): void {
+    if (this.orientationListener || typeof window === "undefined") return;
+    this.orientationListener = (ev: Event) => {
+      this.handleDeviceOrientation(ev as unknown as DeviceOrientationLike);
+    };
+    window.addEventListener("deviceorientationabsolute", this.orientationListener, true);
+    window.addEventListener("deviceorientation", this.orientationListener, true);
+  }
+
+  private detachCompassListeners(): void {
+    if (!this.orientationListener || typeof window === "undefined") return;
+    window.removeEventListener("deviceorientationabsolute", this.orientationListener, true);
+    window.removeEventListener("deviceorientation", this.orientationListener, true);
+    this.orientationListener = null;
+  }
+
+  private formatCompassText(): string {
+    if (this.compassHeadingDegrees === null) {
+      return "Compass: waiting for sensor / tap Enable Compass";
+    }
+    const dirs = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"] as const;
+    const deg = ((this.compassHeadingDegrees % 360) + 360) % 360;
+    const cardinal = dirs[Math.round(deg / 45) % 8];
+    const accPart =
+      this.compassAccuracyDegrees !== null ? ` (±${Math.round(this.compassAccuracyDegrees)}°)` : "";
+    const srcPart =
+      this.compassSource === "webkit_compass"
+        ? "iOS Magnetometer"
+        : this.compassSource === "absolute_alpha"
+          ? "Absolute Sensor"
+          : "GPS Course";
+    return `Compass: ${String(Math.round(deg)).padStart(3, "0")}° ${cardinal}${accPart} [${srcPart}]`;
   }
 
   /**
@@ -289,6 +424,10 @@ export class PhoneGpsClient {
       distanceToTurnMeters: g.distanceToTurnMeters,
       remainingDistanceMeters: g.remainingDistanceMeters,
       routeStatus: g.routeStatus,
+      compassHeadingDegrees: this.compassHeadingDegrees,
+      compassAccuracyDegrees: this.compassAccuracyDegrees,
+      compassSource: this.compassSource,
+      compassText: this.formatCompassText(),
     };
   }
 
@@ -554,6 +693,7 @@ export class PhoneGpsClient {
       phoneSessionId: this.sessionId,
       phoneSeq: this.phoneSeq,
       previousSample: this.previousSample,
+      compassHeadingDegrees: this.compassHeadingDegrees,
       ...routeGuidanceOpts,
     });
     this.previousSample = { coords: pos.coords, timestamp: sampleTimestampMs };

@@ -131,6 +131,7 @@ export class LivePhoneProvider implements NavigationDataProvider {
   private phoneInstruction: string | null = null;
   private phoneRemainingDistanceMeters: number | null = null;
   private phoneDisplayMode: NavigationMode | null = null;
+  private liveCompassHeadingDegrees: number | null = null;
   private socketOpen = false;
   private displaySocketState: DisplaySocketState = "disconnected";
   private phones = 0;
@@ -357,6 +358,7 @@ export class LivePhoneProvider implements NavigationDataProvider {
       this.phoneInstruction = null;
       this.phoneRemainingDistanceMeters = null;
       this.phoneDisplayMode = null;
+      this.liveCompassHeadingDegrees = null;
     } else if (nextPhones === 0) {
       this.lastPhoneSessionId = null;
       this.lastPhoneSeq = null;
@@ -366,6 +368,7 @@ export class LivePhoneProvider implements NavigationDataProvider {
       this.phoneInstruction = null;
       this.phoneRemainingDistanceMeters = null;
       this.phoneDisplayMode = null;
+      this.liveCompassHeadingDegrees = null;
     }
     if (this.phones !== nextPhones) {
       this.phones = nextPhones;
@@ -415,6 +418,28 @@ export class LivePhoneProvider implements NavigationDataProvider {
       return;
     }
 
+    // Real-time iPhone hardware magnetometer/gyroscope compass update (rotates HUD even at 0 km/h)
+    if (obj?.type === "compass") {
+      const rec = obj as Record<string, unknown>;
+      if (
+        typeof rec.headingDegrees === "number" &&
+        Number.isFinite(rec.headingDegrees) &&
+        rec.headingDegrees >= 0 &&
+        rec.headingDegrees < 360
+      ) {
+        this.liveCompassHeadingDegrees = rec.headingDegrees;
+        if (this.state.fix) {
+          this.state = {
+            ...this.state,
+            fix: { ...this.state.fix, headingDegrees: rec.headingDegrees },
+          };
+        }
+        this.emit();
+        this.refreshMetrics(null, null, null);
+      }
+      return;
+    }
+
     // From this point on, the message is a GPS data packet candidate
     this.lastPacketReceivedAtMs = simReceivedAtMs;
 
@@ -425,7 +450,14 @@ export class LivePhoneProvider implements NavigationDataProvider {
       this.refreshMetrics(null, null, null);
       return;
     }
-    const fix = fixRes.value;
+    const rawFix = fixRes.value;
+    if (rawFix.headingDegrees !== null) {
+      this.liveCompassHeadingDegrees = rawFix.headingDegrees;
+    }
+    const fix: GpsFixMessage =
+      rawFix.headingDegrees === null && this.liveCompassHeadingDegrees !== null
+        ? { ...rawFix, headingDegrees: this.liveCompassHeadingDegrees }
+        : rawFix;
 
     // Sender session & sequence validation:
     // - If phoneSessionId changed (phone restarted watcher), reset lastPhoneSeq and lastSampleTimestampMs.
@@ -705,6 +737,9 @@ export class LivePhoneProvider implements NavigationDataProvider {
     const baseData = buildLiveNavigationData(this.state, this.clock.nowMs(), this.sequence);
     const data: NavigationData = {
       ...baseData,
+      headingDegrees:
+        baseData.headingDegrees ??
+        (this.state.linkConnected ? this.liveCompassHeadingDegrees : null),
       ...this.phoneOverlay,
       ...this.overlay,
     };

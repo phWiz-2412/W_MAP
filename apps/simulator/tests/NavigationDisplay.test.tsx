@@ -184,5 +184,22 @@ describe("NavigationDisplay – MAP mode", () => {
     show(makeData({ headingDegrees: 90 }), "MAP");
     expect(screen.getByTestId("map-route").getAttribute("d")).not.toBe(d0);
     expect(screen.getByTestId("position-marker")).toHaveAttribute("data-heading", "90");
+    expect(screen.getByTestId("compass-heading")).toHaveTextContent("090° E");
+    expect(screen.getByTestId("compass-heading")).toHaveAttribute("data-compass", "ACTIVE");
+    expect(screen.getByTestId("compass-tape")).toBeInTheDocument();
+    expect(screen.getByTestId("north-indicator")).toHaveAttribute("data-compass", "ACTIVE");
+  });
+
+  it("never fakes 000° N when headingDegrees is null (shows ---° -- and UNAVAILABLE compass)", () => {
+    const { unmount } = show(makeData({ headingDegrees: null }), "MAP");
+    expect(screen.getByTestId("compass-heading")).toHaveTextContent("---° --");
+    expect(screen.getByTestId("compass-heading")).toHaveAttribute("data-compass", "UNAVAILABLE");
+    expect(screen.queryByTestId("compass-tape")).not.toBeInTheDocument();
+    expect(screen.getByTestId("north-indicator")).toHaveAttribute("data-compass", "UNAVAILABLE");
+    unmount();
+
+    show(makeData({ headingDegrees: null }), "TURN");
+    expect(screen.getByTestId("turn-compass")).toHaveTextContent("---° --");
+    expect(screen.getByTestId("turn-compass")).toHaveAttribute("data-compass", "UNAVAILABLE");
   });
 });
